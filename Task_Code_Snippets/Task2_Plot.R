@@ -21,19 +21,19 @@ text(expected_npv / 1e6, par("usr")[4]*0.8,
 # ------------------------------------------------------------------------------
 # PLOT 2d: CUMULATIVE PROBABILITY OF DISTRESS
 # ------------------------------------------------------------------------------
-# 'cum_prob_distress' is the vector of 60 probabilities calculated in 2d
-plot(1:n_months, cum_prob_distress, type = "l", lwd = 3, col = "firebrick",
-     main = "2d: Life-Cycle Distress Risk",
-     xlab = "Month", ylab = "Cumulative Probability",
-     ylim = c(0, max(cum_prob_distress) * 1.2))
+# THE FIX: Assign the vector we just calculated to the plotting variable
+cum_prob_distress <- cum_prob_distress_vector 
 
-# Highlight the final risk level
-points(n_months, tail(cum_prob_distress, 1), pch = 19, col = "firebrick")
-text(n_months, tail(cum_prob_distress, 1), 
+# 'cum_prob_distress' is the vector of 60 probabilities
+plot(1:60, cum_prob_distress, type = "l", lwd = 3, col = "firebrick",
+     main = paste("Life-Cycle Distress Risk:", mode_label),
+     xlab = "Month", ylab = "Cumulative Probability",
+     ylim = c(0, max(cum_prob_distress, 0.05) * 1.3)) # Added a floor for visibility
+
+# Highlight the final risk level (The 'Default' probability at Month 60)
+points(60, tail(cum_prob_distress, 1), pch = 19, col = "firebrick")
+text(60, tail(cum_prob_distress, 1), 
      labels = paste(round(tail(cum_prob_distress, 1)*100, 1), "%"), 
      pos = 2, col = "firebrick", font = 2)
 
 grid(col = "gray80", lty = "dotted")
-
-# Reset plotting parameters
-par(mfrow = c(1, 1))

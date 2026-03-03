@@ -28,6 +28,8 @@ discount_vec   <- 1 / (1 + r_hedge)^(1:n_months)
 
 # Vector of 10,000 PVs (one for each simulated 'future')
 path_hedge_values <- colSums(payoff_matrix * discount_vec)
+## we use the mean here sincce we sum the discounted payoffs for all
+## 10.000 simulations. after that we take the mean
 fair_value_hedge  <- mean(path_hedge_values)
 
 # 3. STRESS TEST: CORRELATION DECOUPLING (CORR = 0)
@@ -61,6 +63,7 @@ cat("TASK 3: HEDGE VALUATION & STATISTICAL AUDIT\n")
 cat("================================================================\n")
 
 cat(sprintf("Fair Value (Base Case):      €%s\n", format(round(fair_value_hedge, 2), big.mark=",")))
+cat(sprintf("- Base Corr (Elec/Gas):      %s\n", round(corr_base, 4)))
 
 if (exists("stress_test_mode") && stress_test_mode == TRUE) {
   cat(sprintf("Fair Value (Stress Test):    €%s\n", format(round(fair_value_stressed, 2), big.mark=",")))

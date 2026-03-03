@@ -4,6 +4,8 @@
 library(readxl)
 library(moments)
 
+## set your WID manually to the main.R file
+
 last_price_df     <- read_excel("data/DataPost_2026.xlsx", sheet = "Last_Price")
 returns_df        <- read_excel("data/DataPost_2026.xlsx", sheet = "Returns")
 colnames(last_price_df)[1] <- "Date"
@@ -74,4 +76,6 @@ if (hedge_cashflow_calculator == TRUE) {
 if (stress_test_mode == TRUE) {
   message("Performing stress test analysis")
   source("Task_Code_Snippets/Task5_Stress_Analysis.R")
+} else {
+  message("Stress Test inactive")
 }

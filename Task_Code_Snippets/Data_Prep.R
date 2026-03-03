@@ -16,6 +16,10 @@ u_wind_0 <- last_price_df$WindUtilization[1] # 0.3789
 # Why? Utilization is a bounded percentage [0, 1]. To simulate it safely 
 # without breaking physical limits (e.g. hitting 105%), we must start in 
 # Logit-Space.
+
+## seems as if gemini removed the logit table import and calculated its own
+## logit wind vector
+
 # Formula: L = ln( p / (1 - p) )
 
 l_wind_0 <- log(u_wind_0 / (1 - u_wind_0))

@@ -54,21 +54,40 @@
 #    - We retain the (mu - 0.5 * sigma^2) term for GBM assets (Elec, Gas, Carbon) 
 #       to ensure the expected value of our paths equals the arithmetic mean.
 # ------------------------------------------------------------------------------
+# ==============================================================================
+# TASK 1.2: MULTIVARIATE MONTE CARLO ENGINE (CORRELATED RANDOM WALKS)
+# ==============================================================================
+# SUMMARY OF OPERATIONS:
+# 1. CALIBRATION: Extracts drift (mu) and volatility (sigma) from historical data.
+# 2. COVARIANCE: Uses Cholesky Decomposition to link variables (e.g., Gas & Elec).
+# 3. EVOLUTION:
+#    - Prices (Elec, Gas, Carb): Evolved via Geometric Brownian Motion (GBM).
+#    - Wind (Utilization): Evolved via Additive Random Walk in Logit-Space.
+# 4. TRANSFORMATION: Maps Logit paths back to physical [0,1] range (Sigmoid).
+# 5. PRICING: Dynamically sets PPA price at 20% discount to simulated mean.
+# ==============================================================================
 
 # 1. CALIBRATION & CORRELATION MATRIX
 # ------------------------------------------------------------------------------
 vars <- c("Electricity", "NaturalGas", "Carbon", "WindUtilization")
 
-# Extracting Drift (mu) and Volatility (sigma)
 mu    <- sapply(returns_df[, vars], mean, na.rm = TRUE)
 sigma <- sapply(returns_df[, vars], sd, na.rm = TRUE)
 
-# Calculate historical correlation matrix
+# Calculate the historical correlation matrix
 cor_mat <- cor(returns_df[, vars], use = "pairwise.complete.obs")
 
-# Apply Cholesky Decomposition: L %*% t(L) = cor_mat
-# This 'L' matrix is the "mathematical bridge" that links our variables.
-L <- t(chol(cor_mat)) 
+# --- Q5.a STRESS TEST OVERRIDE: THE IDENTITY MATRIX FIX ---
+if (exists("stress_test_mode") && stress_test_mode == TRUE) {
+  # [Q5.a]: Manually override correlation to 0.0 using an Identity Matrix.
+  # This prevents the variables from moving together during the evolution.
+  L <- diag(n_vars) 
+  cat("STRESS TEST ACTIVE: L-Matrix is now Identity (Correlation = 0.0)\n")
+} else {
+  # [Base Case]: Use Cholesky Decomposition to link Gas/Elec/Carbon/Wind.
+  L <- t(chol(cor_mat))
+  cat("BASE CASE ACTIVE: L-Matrix derived from historical correlations\n")
+}
 
 # 2. PRE-ALLOCATION
 # ------------------------------------------------------------------------------
@@ -76,7 +95,6 @@ n_paths  <- 10000
 n_months <- 60
 n_vars   <- length(vars)
 
-# We create a list of matrices to store our simulated universes
 sim_list <- list(
   Electricity     = matrix(NA, n_months + 1, n_paths),
   NaturalGas      = matrix(NA, n_months + 1, n_paths),
@@ -84,34 +102,31 @@ sim_list <- list(
   WindUtilization = matrix(NA, n_months + 1, n_paths)
 )
 
-# Initialize T=0 Anchors
 sim_list$Electricity[1, ]     <- p_elec_0
 sim_list$NaturalGas[1, ]      <- p_gas_0
 sim_list$Carbon[1, ]          <- p_carb_0
-sim_list$WindUtilization[1, ] <- l_wind_0 # Initialized in Logit-Space
+sim_list$WindUtilization[1, ] <- l_wind_0 
 
 # 3. THE MULTIVARIATE EVOLUTION LOOP
 # ------------------------------------------------------------------------------
-set.seed(123) # Reproducibility
+set.seed(123) 
 
 for (t in 2:(n_months + 1)) {
   
-  # A. Generate Independent Shocks for all 4 variables across 10,000 paths
+  # PRINCIPLE: Multivariate Correlated Shocks
   Z_indep <- matrix(rnorm(n_paths * n_vars), ncol = n_vars)
+  Z_corr  <- Z_indep %*% t(L)
   
-  # B. Transform to Correlated Shocks using Cholesky L
-  # Formula: Z_corr = Z_indep %*% t(L)
-  Z_corr <- Z_indep %*% t(L)
-  
-  # C. Evolve Each Variable
   for (v in 1:n_vars) {
     var_name <- vars[v]
     
     if (var_name == "WindUtilization") {
-      # ADDITIVE RANDOM WALK (Logit-Space)
+      # PRINCIPLE: Additive Random Walk (Logit-Space)
+      # Simulates movement in unbounded space to respect 0% and 100% physical floors/ceilings.
       sim_list[[var_name]][t, ] <- sim_list[[var_name]][t-1, ] + mu[v] + sigma[v] * Z_corr[, v]
     } else {
-      # GEOMETRIC BROWNIAN MOTION (Price Space)
+      # PRINCIPLE: Geometric Brownian Motion (GBM)
+      # Includes Jensen's Inequality correction (-0.5*sigma^2) to preserve mean expectation.
       drift <- (mu[v] - 0.5 * sigma[v]^2)
       sim_list[[var_name]][t, ] <- sim_list[[var_name]][t-1, ] * exp(drift + sigma[v] * Z_corr[, v])
     }
@@ -125,69 +140,54 @@ sim_gas   <- sim_list$NaturalGas
 sim_carb  <- sim_list$Carbon
 sim_logit <- sim_list$WindUtilization
 
-# Convert Wind from Logit back to [0,1] Sigmoid range
+# PRINCIPLE: Sigmoid Inverse Transformation
+# Returns Logit-space values to physical wind utilization percentages.
 sim_util  <- exp(sim_logit) / (1 + exp(sim_logit))
 
 # ------------------------------------------------------------------------------
-# VERIFICATION: Does the simulation respect the input correlation?
+# VERIFICATION: Correlation Audit
 # ------------------------------------------------------------------------------
 actual_sim_corr <- cor(as.vector(sim_elec[2:61,]), as.vector(sim_gas[2:61,]))
 cat("Audit: Simulated Elec/Gas Correlation is", round(actual_sim_corr, 4), "\n")
 
 # 5. DYNAMIC PPA PRICING (POST-SIMULATION)
 # ------------------------------------------------------------------------------
-# We only calculate the 'Contract Price' during a Normal/Correlated run.
-# If we are in Stress Mode and p_ppa doesn't exist, we have a sequence error.
-
 if (exists("stress_test_mode") && stress_test_mode == TRUE) {
   
   if (!exists("p_ppa_locked")) {
-    # SAFETY FALLBACK: If user runs Stress Test first, use Historical Data instead
-    # to avoid 're-negotiating' the PPA based on a stressed simulation.
     cat("!!! WARNING: Stress Test run before Base Case. Using Historical Mean for PPA !!!\n")
     p_ppa <- mean(returns_df$Electricity, na.rm = TRUE) * 0.80
     p_ppa_locked <- p_ppa
   } else {
-    # Use the price established in the Base Case
     p_ppa <- p_ppa_locked
     cat("STRESS TEST: Retaining PPA Price from Base Case (€", round(p_ppa, 2), ")\n")
   }
   
 } else {
-  # NORMAL / BASE CASE: Define the contractual price here
+  # PRINCIPLE: Endogenous Contract Pricing
+  # Sets PPA fixed price based on the expected mean of the specific simulated universe.
   expected_market_avg <- mean(sim_elec[2:61, ])
-  p_ppa               <- expected_market_avg * 0.80
-  p_ppa_locked        <- p_ppa # Lock it for future Stress/Hedge runs
+  p_ppa                <- expected_market_avg * 0.80
+  p_ppa_locked         <- p_ppa 
   
   cat("BASE CASE: PPA Price established at €", round(p_ppa, 2), "\n")
 }
 
 # ------------------------------------------------------------------------------
-# 6. FINAL ANNOTATION
+# 6. FINAL ANNOTATION & PLOTTING
 # ------------------------------------------------------------------------------
 mtext("Density of 10,000 correlated paths; PPA set at 20% discount to Sim Mean", 
       side = 3, line = 0.5, cex = 0.9)
 
-# ------------------------------------------------------------------------------
-# OUTPUT: We now have 4 matrices (61 rows x 10,000 columns) ready for 
-# Task 2 (Revenue), Task 3 (Cost), and the Task 5 Distress Analysis.
-# ------------------------------------------------------------------------------
-
-# ==============================================================================
-# TASK 1.2: VISUALIZING THE 10,000 PATH "UNIVERSE" (ELECTRICITY)
-# ==============================================================================
-# 1. CALCULATE BOUNDARIES
 q_elec <- apply(sim_elec, 1, quantile, probs = c(0.1, 0.5, 0.9))
 
-# 2. PLOT THE DENSITY CLOUD
 matplot(0:n_months, sim_elec, type = "l", lty = 1, 
         col = rgb(0.1, 0.3, 0.6, 0.01), 
         main = "Monte Carlo: Correlated Electricity Paths",
         xlab = "Month", ylab = "Price (EUR/MWh)")
 
-# 3. OVERLAY QUANTILE TRENDS
 lines(0:n_months, q_elec[1, ], col = "red",    lwd = 2, lty = 2) 
-lines(0:n_months, q_elec[2, ], col = "yellow", lwd = 3)         
+lines(0:n_months, q_elec[2, ], col = "yellow", lwd = 3)          
 lines(0:n_months, q_elec[3, ], col = "green",  lwd = 2, lty = 2) 
 
 legend("topleft", legend = c("P90", "P50 (Median)", "P10"),
