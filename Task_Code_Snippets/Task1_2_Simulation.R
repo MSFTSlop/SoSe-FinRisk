@@ -33,54 +33,140 @@
 #      is not mathematically justified. The Random Walk is the most 
 #      parsimonious and scientifically robust choice for this dataset.
 # ------------------------------------------------------------------------------
+# ==============================================================================
+# TASK 1.2: CORRELATED MULTIVARIATE SIMULATION ENGINE (10,000 PATHS)
+# ==============================================================================
 
-# 1. SIMULATION PARAMETERS
-set.seed(123)       # Ensures reproducibility for audit trails
-n_paths  <- 10000   # 10k paths to capture extreme 'tail' risks in Task 5
-n_months <- 60      # 5-year project duration
-vars     <- c("Electricity", "NaturalGas", "Carbon", "WindUtilization")
+# ------------------------------------------------------------------------------
+# ARCHITECTURAL REWORK: WHY WE MOVED TO A MULTIVARIATE MATRIX APPROACH
+# ------------------------------------------------------------------------------
+# 1. THE CORRELATION FIX (Cholesky Decomposition):
+#    - PROBLEM: Independent rnorm() calls created 0% correlation between Gas/Elec.
+#    - SOLUTION: We now calculate the historical Correlation Matrix and apply 
+#      Cholesky Decomposition. By multiplying independent shocks by the Cholesky 
+#      L-matrix, we force the simulated paths to respect historical relationships.
+#
+# 2. VECTORIZED EFFICIENCY:
+#    - Instead of looping through 10,000 paths (which is slow in R), we generate
+#      entire "Time-Step Slices" for all paths at once using matrix math.
+#
+# 3. JENSEN'S INEQUALITY CORRECTION:
+#    - We retain the (mu - 0.5 * sigma^2) term for GBM assets (Elec, Gas, Carbon) 
+#       to ensure the expected value of our paths equals the arithmetic mean.
+# ------------------------------------------------------------------------------
 
-# 2. PARAMETER CALIBRATION
-# Extracting monthly drift (mu) and volatility (sigma) from historical returns
-calib <- sapply(returns_df[, vars], function(x) {
-  c(mu = mean(x, na.rm = TRUE), sigma = sd(x, na.rm = TRUE))
-})
+# 1. CALIBRATION & CORRELATION MATRIX
+# ------------------------------------------------------------------------------
+vars <- c("Electricity", "NaturalGas", "Carbon", "WindUtilization")
 
-# 3. CORE SIMULATION FUNCTION
-# This engine generates the "10,000 Universes" required for project valuation.
-run_simulation <- function(start_val, mu, sigma, n_p, n_m, is_logit = FALSE) {
-  # Pre-allocate matrix for performance (Rows = Months, Cols = Paths)
-  out <- matrix(NA, nrow = n_m + 1, ncol = n_p)
-  out[1, ] <- start_val  # Setting the T=0 Anchor from historical data
+# Extracting Drift (mu) and Volatility (sigma)
+mu    <- sapply(returns_df[, vars], mean, na.rm = TRUE)
+sigma <- sapply(returns_df[, vars], sd, na.rm = TRUE)
+
+# Calculate historical correlation matrix
+cor_mat <- cor(returns_df[, vars], use = "pairwise.complete.obs")
+
+# Apply Cholesky Decomposition: L %*% t(L) = cor_mat
+# This 'L' matrix is the "mathematical bridge" that links our variables.
+L <- t(chol(cor_mat)) 
+
+# 2. PRE-ALLOCATION
+# ------------------------------------------------------------------------------
+n_paths  <- 10000
+n_months <- 60
+n_vars   <- length(vars)
+
+# We create a list of matrices to store our simulated universes
+sim_list <- list(
+  Electricity     = matrix(NA, n_months + 1, n_paths),
+  NaturalGas      = matrix(NA, n_months + 1, n_paths),
+  Carbon          = matrix(NA, n_months + 1, n_paths),
+  WindUtilization = matrix(NA, n_months + 1, n_paths)
+)
+
+# Initialize T=0 Anchors
+sim_list$Electricity[1, ]     <- p_elec_0
+sim_list$NaturalGas[1, ]      <- p_gas_0
+sim_list$Carbon[1, ]          <- p_carb_0
+sim_list$WindUtilization[1, ] <- l_wind_0 # Initialized in Logit-Space
+
+# 3. THE MULTIVARIATE EVOLUTION LOOP
+# ------------------------------------------------------------------------------
+set.seed(123) # Reproducibility
+
+for (t in 2:(n_months + 1)) {
   
-  for (p in 1:n_p) {
-    # Generating 60 independent monthly shocks (Z-scores)
-    z <- rnorm(n_m)
+  # A. Generate Independent Shocks for all 4 variables across 10,000 paths
+  Z_indep <- matrix(rnorm(n_paths * n_vars), ncol = n_vars)
+  
+  # B. Transform to Correlated Shocks using Cholesky L
+  # Formula: Z_corr = Z_indep %*% t(L)
+  Z_corr <- Z_indep %*% t(L)
+  
+  # C. Evolve Each Variable
+  for (v in 1:n_vars) {
+    var_name <- vars[v]
     
-    if (is_logit) {
-      # ADDITIVE MODEL: Captures symmetric fluctuations in the logit scale
-      shocks <- mu + (sigma * z)
-      out[2:(n_m + 1), p] <- start_val + cumsum(shocks)
+    if (var_name == "WindUtilization") {
+      # ADDITIVE RANDOM WALK (Logit-Space)
+      sim_list[[var_name]][t, ] <- sim_list[[var_name]][t-1, ] + mu[v] + sigma[v] * Z_corr[, v]
     } else {
-      # GBM MODEL: Multiplicative growth with Jensen's Inequality correction
-      # (mu - 0.5 * sigma^2) ensures the simulated mean matches the data mean.
-      drift <- (mu - 0.5 * sigma^2)
-      growth <- exp(cumsum(drift + (sigma * z)))
-      out[2:(n_m + 1), p] <- start_val * growth
+      # GEOMETRIC BROWNIAN MOTION (Price Space)
+      drift <- (mu[v] - 0.5 * sigma[v]^2)
+      sim_list[[var_name]][t, ] <- sim_list[[var_name]][t-1, ] * exp(drift + sigma[v] * Z_corr[, v])
     }
   }
-  return(out)
 }
 
-# 4. GENERATING THE DATA MATRICES
-sim_elec  <- run_simulation(p_elec_0, calib["mu","Electricity"], calib["sigma","Electricity"], n_paths, n_months)
-sim_gas   <- run_simulation(p_gas_0,  calib["mu","NaturalGas"],  calib["sigma","NaturalGas"],  n_paths, n_months)
-sim_carb  <- run_simulation(p_carb_0, calib["mu","Carbon"],      calib["sigma","Carbon"],      n_paths, n_months)
-sim_logit <- run_simulation(l_wind_0, calib["mu","WindUtilization"], calib["sigma","WindUtilization"], n_paths, n_months, is_logit = TRUE)
+# 4. FINAL EXTRACTION & BACK-TRANSFORMATION
+# ------------------------------------------------------------------------------
+sim_elec  <- sim_list$Electricity
+sim_gas   <- sim_list$NaturalGas
+sim_carb  <- sim_list$Carbon
+sim_logit <- sim_list$WindUtilization
 
-# 5. BACK-TRANSFORMATION (SIGMOID)
-# Converts Logit-Space paths back into physical Wind Utilization % [0, 1]
+# Convert Wind from Logit back to [0,1] Sigmoid range
 sim_util  <- exp(sim_logit) / (1 + exp(sim_logit))
+
+# ------------------------------------------------------------------------------
+# VERIFICATION: Does the simulation respect the input correlation?
+# ------------------------------------------------------------------------------
+actual_sim_corr <- cor(as.vector(sim_elec[2:61,]), as.vector(sim_gas[2:61,]))
+cat("Audit: Simulated Elec/Gas Correlation is", round(actual_sim_corr, 4), "\n")
+
+# 5. DYNAMIC PPA PRICING (POST-SIMULATION)
+# ------------------------------------------------------------------------------
+# We only calculate the 'Contract Price' during a Normal/Correlated run.
+# If we are in Stress Mode and p_ppa doesn't exist, we have a sequence error.
+
+if (exists("stress_test_mode") && stress_test_mode == TRUE) {
+  
+  if (!exists("p_ppa_locked")) {
+    # SAFETY FALLBACK: If user runs Stress Test first, use Historical Data instead
+    # to avoid 're-negotiating' the PPA based on a stressed simulation.
+    cat("!!! WARNING: Stress Test run before Base Case. Using Historical Mean for PPA !!!\n")
+    p_ppa <- mean(returns_df$Electricity, na.rm = TRUE) * 0.80
+    p_ppa_locked <- p_ppa
+  } else {
+    # Use the price established in the Base Case
+    p_ppa <- p_ppa_locked
+    cat("STRESS TEST: Retaining PPA Price from Base Case (€", round(p_ppa, 2), ")\n")
+  }
+  
+} else {
+  # NORMAL / BASE CASE: Define the contractual price here
+  expected_market_avg <- mean(sim_elec[2:61, ])
+  p_ppa               <- expected_market_avg * 0.80
+  p_ppa_locked        <- p_ppa # Lock it for future Stress/Hedge runs
+  
+  cat("BASE CASE: PPA Price established at €", round(p_ppa, 2), "\n")
+}
+
+# ------------------------------------------------------------------------------
+# 6. FINAL ANNOTATION
+# ------------------------------------------------------------------------------
+mtext("Density of 10,000 correlated paths; PPA set at 20% discount to Sim Mean", 
+      side = 3, line = 0.5, cex = 0.9)
 
 # ------------------------------------------------------------------------------
 # OUTPUT: We now have 4 matrices (61 rows x 10,000 columns) ready for 
@@ -90,34 +176,19 @@ sim_util  <- exp(sim_logit) / (1 + exp(sim_logit))
 # ==============================================================================
 # TASK 1.2: VISUALIZING THE 10,000 PATH "UNIVERSE" (ELECTRICITY)
 # ==============================================================================
-
-# 1. CALCULATE STATISTICAL QUANTILE BOUNDARIES
-# We compress 10,000 paths into 3 key lines: P10 (Risk), P50 (Median), P90 (Upside)
-# 'sim_elec' is the 61x10000 matrix from your simulation
+# 1. CALCULATE BOUNDARIES
 q_elec <- apply(sim_elec, 1, quantile, probs = c(0.1, 0.5, 0.9))
 
-# 2. GENERATE THE FAN CHART
-# We use 'rgb' with a very low alpha (0.015) to create a density "cloud"
-# This allows us to see all 10,000 paths simultaneously
+# 2. PLOT THE DENSITY CLOUD
 matplot(0:n_months, sim_elec, type = "l", lty = 1, 
-        col = rgb(0.1, 0.3, 0.6, 0.015), # Extremely transparent blue
-        main = "Monte Carlo: 10,000 Electricity Price Paths",
-        xlab = "Month", ylab = "Price (EUR/MWh)",
-        xaxt = "n") # Custom axis for months
+        col = rgb(0.1, 0.3, 0.6, 0.01), 
+        main = "Monte Carlo: Correlated Electricity Paths",
+        xlab = "Month", ylab = "Price (EUR/MWh)")
 
-# 3. OVERLAY THE PROJECT RISK BOUNDARIES
-# These provide the "navigation" through the cloud
-lines(0:n_months, q_elec[1, ], col = "red",    lwd = 3, lty = 2) # 10th Percentile (Stress)
-lines(0:n_months, q_elec[2, ], col = "yellow", lwd = 4)         # 50th Percentile (Expected)
-lines(0:n_months, q_elec[3, ], col = "green",  lwd = 3, lty = 2) # 90th Percentile (Upside)
+# 3. OVERLAY QUANTILE TRENDS
+lines(0:n_months, q_elec[1, ], col = "red",    lwd = 2, lty = 2) 
+lines(0:n_months, q_elec[2, ], col = "yellow", lwd = 3)         
+lines(0:n_months, q_elec[3, ], col = "green",  lwd = 2, lty = 2) 
 
-# 4. CUSTOMIZE AXIS AND LEGEND
-axis(1, at = seq(0, n_months, by = 12)) # Yearly tick marks
-legend("topleft", 
-       legend = c("90th Percentile (Upside)", "50th Percentile (Median)", "10th Percentile (Stress)"),
-       col = c("green", "yellow", "red"), lwd = 4, lty = c(2, 1, 2), 
-       bg = "white", cex = 0.8)
-
-# 5. TASK-SPECIFIC ANNOTATION
-# This text explains the relevance to the future project phases
-mtext("Density of 10,000 paths based on Random Walk / GBM calibration", side = 3, line = 0.5, cex = 0.9)
+legend("topleft", legend = c("P90", "P50 (Median)", "P10"),
+       col = c("green", "yellow", "red"), lwd = 3, bg="white")
