@@ -1,89 +1,122 @@
 # ==============================================================================
-# TASK 3: KNOCK-IN SPARK SPREAD HEDGE VALUATION & CORRELATION AUDIT
+# TASK 3: EXOTIC HEDGE VALUATION & CORRELATION AUDIT
 # ==============================================================================
 
-# 1. DERIVATIVE PAYOFF LOGIC (THE "SPARK SPREAD" UNDERLYING)
+# 0. SAFEGUARD: Check for existence of required universes
 # ------------------------------------------------------------------------------
-# Theory: Payoff = Trigger(Wind) * Max(0, Gas - Elec) * Volume
-# The Knock-In acts as a "conditional insurance" policy.
+current_mode_label <- if (exists("stress_test_mode") && stress_test_mode == TRUE) "STRESS" else "BASE"
 
-# A. Calculate the Spread Matrix (Gas - Electricity)
-# Note: We exclude T=0 (row 1) as there is no payoff at the start date.
-spread_matrix <- sim_gas[2:61, ] - sim_elec[2:61, ]
-
-# B. Identify Knock-In Events (Utilization < 40%)
-# This creates a Boolean matrix (TRUE/FALSE)
-trigger_matrix <- sim_util[2:61, ] < 0.40
-
-# C. Calculate Monthly Payoffs
-# Volumetric obligation: 50MW * 720 hours = 36,000 MWh
-mwh_volume    <- project_params$demand_ppa * project_params$hours_mo
-payoff_matrix <- trigger_matrix * pmax(0, spread_matrix) * mwh_volume
-
-# 2. DISCOUNTING & FAIR VALUE (BASE CASE)
-# ------------------------------------------------------------------------------
-# Discount Rate: 2% annually / 12 months
-r_hedge        <- 0.02 / 12
-discount_vec   <- 1 / (1 + r_hedge)^(1:n_months)
-
-# Vector of 10,000 PVs (one for each simulated 'future')
-path_hedge_values <- colSums(payoff_matrix * discount_vec)
-## we use the mean here sincce we sum the discounted payoffs for all
-## 10.000 simulations. after that we take the mean
-fair_value_hedge  <- mean(path_hedge_values)
-
-# 3. STRESS TEST: CORRELATION DECOUPLING (CORR = 0)
-# ------------------------------------------------------------------------------
-if (exists("stress_test_mode") && stress_test_mode == TRUE) {
-  
-  # A. The Shuffling Technique
-  # We decouple Gas from Elec by randomizing path pairings.
-  shuffled_indices <- sample(1:n_paths)
-  sim_gas_stressed <- sim_gas[, shuffled_indices]
-  
-  # B. Recalculate Stressed Payoffs
-  spread_stressed <- sim_gas_stressed[2:61, ] - sim_elec[2:61, ]
-  payoff_stressed <- trigger_matrix * pmax(0, spread_stressed) * mwh_volume
-  
-  # C. Stressed Fair Value
-  path_values_stressed <- colSums(payoff_stressed * discount_vec)
-  fair_value_stressed  <- mean(path_values_stressed)
-  
-  # D. AUDIT: Statistical Verification of Correlation Breakdown
-  # We convert matrices to vectors to check 'Global Correlation'
-  corr_base     <- cor(as.vector(sim_gas[2:61, ]), as.vector(sim_elec[2:61, ]))
-  corr_stressed <- cor(as.vector(sim_gas_stressed[2:61, ]), as.vector(sim_elec[2:61, ]))
+if (current_mode_label == "STRESS" && !exists("sim_universe_stressed")) {
+  stop("FATAL ERROR: 'sim_universe_stressed' not found. Run Task 1.2 in Stress Mode first.")
+}
+if (current_mode_label == "BASE" && !exists("sim_universe_base")) {
+  stop("FATAL ERROR: 'sim_universe_base' not found. Run Task 1.2 in Base Mode first.")
 }
 
+# 1. EXTRACT SECURED MATRICES (EXPLICIT ROUTING)
 # ------------------------------------------------------------------------------
-# 4. TASK 3 OUTPUT SUMMARY & AUDIT REPORT
+switch(current_mode_label,
+       "BASE" = {
+         sim_elec <- sim_universe_base$sim_elec
+         sim_gas  <- sim_universe_base$sim_gas
+         sim_util <- sim_universe_base$sim_util
+       },
+       "STRESS" = {
+         sim_elec <- sim_universe_stressed$sim_elec
+         sim_gas  <- sim_universe_stressed$sim_gas
+         sim_util <- sim_universe_stressed$sim_util
+       }
+)
+
+# 2. THE PAYOFF LOGIC (Consistent for both scenarios)
 # ------------------------------------------------------------------------------
+spread_matrix  <- sim_gas[2:61, ] - sim_elec[2:61, ] 
+trigger_matrix <- sim_util[2:61, ] < 0.40           
+mwh_volume     <- 50 * 720                           
+payoff_matrix  <- trigger_matrix * pmax(0, spread_matrix) * mwh_volume
+
+# 3. DISCOUNTING TO FAIR VALUE
+# ------------------------------------------------------------------------------
+r_monthly      <- 0.02 / 12
+discount_vec   <- 1 / (1 + r_monthly)^(1:60)
+path_hedge_pvs <- colSums(payoff_matrix * discount_vec)
+fv_hedge       <- mean(path_hedge_pvs)
+
+# 4. ARCHIVING & THE AUDIT REPORT
+# ------------------------------------------------------------------------------
+current_hedge <- list(
+  fair_value    = fv_hedge,
+  payoff_matrix = payoff_matrix,
+  path_pvs      = path_hedge_pvs
+)
+
 cat("\n================================================================\n")
 cat("TASK 3: HEDGE VALUATION & STATISTICAL AUDIT\n")
 cat("================================================================\n")
 
-cat(sprintf("Fair Value (Base Case):      €%s\n", format(round(fair_value_hedge, 2), big.mark=",")))
-cat(sprintf("- Base Corr (Elec/Gas):      %s\n", round(corr_base, 4)))
-
-if (exists("stress_test_mode") && stress_test_mode == TRUE) {
-  cat(sprintf("Fair Value (Stress Test):    €%s\n", format(round(fair_value_stressed, 2), big.mark=",")))
-  cat(sprintf("Correlation Impact (Value):  €%s\n", format(round(fair_value_stressed - fair_value_hedge, 2), big.mark=",")))
-  cat("----------------------------------------------------------------\n")
-  cat("CORRELATION VERIFICATION:\n")
-  cat(sprintf("- Base Corr (Elec/Gas):      %s\n", round(corr_base, 4)))
-  cat(sprintf("- Stressed Corr (Elec/Gas):  %s (Approaching Zero)\n", round(corr_stressed, 4)))
-  
-  # Theoretical Insight
-  cat("\nTHEORETICAL INSIGHT:\n")
-  if(fair_value_stressed > fair_value_hedge) {
-    cat("The hedge is CHEAPER when correlated. High correlation means Gas and\n")
-    cat("Elec move together, naturally 'shrinking' the spread payoffs.\n")
-  } else {
-    cat("The hedge is MORE EXPENSIVE when correlated. This suggests the \n")
-    cat("spread widens under historical market conditions.\n")
-  }
-}
+switch(current_mode_label,
+       "BASE" = {
+         hedge_base <- current_hedge
+         corr_base  <- cor(as.vector(sim_elec[2:61,]), as.vector(sim_gas[2:61,]))
+         
+         cat(sprintf("Fair Value (Base Case):      €%s\n", format(round(fv_hedge, 2), big.mark=",")))
+         cat(sprintf("- Base Corr (Elec/Gas):      %s\n", round(corr_base, 4)))
+         cat("\n>>> 'hedge_base' successfully secured for Task 2.\n")
+       },
+       
+       "STRESS" = {
+         hedge_stressed <- current_hedge
+         corr_stressed  <- cor(as.vector(sim_elec[2:61,]), as.vector(sim_gas[2:61,]))
+         
+         cat(sprintf("Fair Value (Stress Test):    €%s\n", format(round(fv_hedge, 2), big.mark=",")))
+         cat(sprintf("- Stressed Corr (Elec/Gas):  %s (Approaching Zero)\n", round(corr_stressed, 4)))
+         
+         # Generate the comparative insight ONLY if the Base Case has already been run
+         if (exists("hedge_base") && exists("sim_universe_base")) {
+           corr_base  <- cor(as.vector(sim_universe_base$sim_elec[2:61,]), 
+                             as.vector(sim_universe_base$sim_gas[2:61,]))
+           impact_val <- hedge_stressed$fair_value - hedge_base$fair_value
+           
+           cat("----------------------------------------------------------------\n")
+           cat("CORRELATION VERIFICATION & IMPACT:\n")
+           cat(sprintf("- Base Corr (Elec/Gas):      %s\n", round(corr_base, 4)))
+           cat(sprintf("Correlation Impact (Value):  €%s\n", format(round(impact_val, 2), big.mark=",")))
+           
+           cat("\nTHEORETICAL INSIGHT:\n")
+           if(hedge_stressed$fair_value > hedge_base$fair_value) {
+             cat("The hedge is CHEAPER when correlated. High correlation means Gas and\n")
+             cat("Elec move together, naturally 'shrinking' the spread payoffs.\n")
+             cat("Decoupling forces the SPV to rely heavily on this derivative.\n")
+           } else {
+             cat("The hedge is MORE EXPENSIVE when correlated. This suggests the \n")
+             cat("spread widens under historical market conditions.\n")
+           }
+         } else {
+           cat("\n(Run Base Case first to see comparative Correlation Impact)\n")
+         }
+         cat("\n>>> 'hedge_stressed' successfully secured for Task 2.\n")
+       }
+)
 cat("================================================================\n")
+
+# ==============================================================================
+# 5. WORKSPACE SANITIZATION (THE COURTESY CLEANUP)
+# ==============================================================================
+# Remove temporary matrices and variables to prevent memory leaks and ghost data.
+
+# Determine which correlation variables exist so we don't throw an error when removing them
+vars_to_remove <- c("sim_elec", "sim_gas", "sim_util", "spread_matrix", 
+                    "trigger_matrix", "payoff_matrix", "path_hedge_pvs", 
+                    "current_hedge", "r_monthly", "discount_vec", "fv_hedge", 
+                    "mwh_volume", "current_mode_label")
+
+if (exists("corr_base")) vars_to_remove <- c(vars_to_remove, "corr_base")
+if (exists("corr_stressed")) vars_to_remove <- c(vars_to_remove, "corr_stressed")
+if (exists("impact_val")) vars_to_remove <- c(vars_to_remove, "impact_val")
+
+rm(list = vars_to_remove)
+
+cat(">>> Workspace sanitized. Temporary Task 3 variables cleared.\n")
 
 # ==============================================================================
 # DATA LINEAGE & VARIABLE ANCESTRY (TASK 1 -> TASK 2 -> TASK 3)

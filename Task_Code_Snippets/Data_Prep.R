@@ -1,4 +1,4 @@
-# 2. ANCHOR INITIALIZATION (T=0: January 2026)
+# ANCHOR INITIALIZATION (T=0: January 2026)
 # ------------------------------------------------------------------------------
 # These variables represent the 'State of the World' at the start of the project.
 # Every simulation path in Task 1 will 'evolve' from these coordinates.
@@ -21,6 +21,9 @@ u_wind_0 <- last_price_df$WindUtilization[1] # 0.3789
 ## logit wind vector
 
 # Formula: L = ln( p / (1 - p) )
+
+## if we need to use the given logit function we just need to
+## replace the formula with the vector
 
 l_wind_0 <- log(u_wind_0 / (1 - u_wind_0))
 
