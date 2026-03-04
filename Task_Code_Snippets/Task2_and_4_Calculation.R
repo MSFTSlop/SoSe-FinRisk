@@ -74,6 +74,7 @@ A_t[1, ] <- 0
 # 3. THE 60-MONTH WATERFALL LOOP
 # ------------------------------------------------------------------------------
 message("Starting the 60 Month Calculation")
+
 for (t in 1:n_months) {
   
   # --- A. PRODUCTION LOGIC ---
@@ -88,9 +89,9 @@ for (t in 1:n_months) {
   # Excess: Any wind generation > 50 MW
   excess_wind <- pmax(wind_gen_mw - demand_ppa, 0)
   
-  # --- B. REVENUE LOGIC ---
-  # Data Center priced at Monthly Average Spot Price with 20% discount (p_ppa)
-  rev_dc       <- (wind_to_dc + gas_to_dc) * hours_mo * univ$p_ppa
+  # --- B. REVENUE LOGIC (UPDATED TO MATCH PDF PROMPT) ---
+  # Data Center priced at the FLOATING Monthly Average Spot Price with 20% discount
+  rev_dc       <- (wind_to_dc + gas_to_dc) * hours_mo * (univ$sim_elec[t+1, ] * 0.80)
   
   # Excess sold to grid at Monthly Average Spot Price (no discount)
   rev_merchant <- excess_wind * hours_mo * univ$sim_elec[t+1, ]
@@ -131,6 +132,8 @@ for (t in 1:n_months) {
   # Reset deficit paths to €0, profitable paths keep positive cash
   A_t[t+1, ] <- pmax(potential_balance, 0)
 }
+
+
 
 # ------------------------------------------------------------------------------
 # 4. FINAL EQUITY VALUATION (NPV)
