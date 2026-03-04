@@ -37,5 +37,9 @@ project_params <- list(
   hours_mo        = 720,      # Monthly operating hours (24*30)
   debt_principal  = 60e6,     # Bullet repayment at Month 60
   monthly_coupon  = 0.6e6,    # Interest expense
-  distress_fee    = 0.10      # 10% penalty on equity injections
+  distress_fee    = 0.10,      # 10% penalty on equity injections
+  # --- ACTUAL ASSIGNMENT OPERATIONAL PARAMS ---
+  wind_opex_mwh   = 20,       # From general 1.png
+  gas_opex_mwh    = 45,       # From general 1.png
+  emission_factor = 0.40      # From general 1.png
 )

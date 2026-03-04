@@ -1,145 +1,197 @@
 # ==============================================================================
-# UNIFIED TASK 2, 4 & 5: CONSOLIDATED CASH FLOW WATERFALL
+# TASK 2 & 4: CASHFLOW WATERFALL & EQUITY VALUATION
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# Q2.a / Q4.a: PHYSICAL PRODUCTION & REVENUE WATERFALL
+# 1. DATA LINEAGE: ROUTING BASED ON MODE LABEL
 # ------------------------------------------------------------------------------
-
-# [Q2.a.i]: Revenue from Electricity Sales (Data Center + Excess)
-prod_total_mwh <- project_params$cap_wind * sim_util * project_params$hours_mo
-target_mwh     <- project_params$demand_ppa * project_params$hours_mo
-
-# Data Center Sales (Fixed PPA volume)
-prod_ppa_mwh   <- pmin(prod_total_mwh, target_mwh)
-rev_ppa        <- prod_ppa_mwh * p_ppa 
-
-# Excess Sales (Merchant upside sold at spot price)
-prod_merch_mwh <- pmax(0, prod_total_mwh - target_mwh)
-rev_merchant   <- prod_merch_mwh * sim_elec 
-
-# [Q2.a.ii]: Operating costs (Wind + backup fulfillment) and Fuel/Carbon Costs
-# Shortfall occurs when Wind < PPA obligation; SPV must buy backup at market spot price.
-shortfall_mwh  <- pmax(0, target_mwh - prod_total_mwh)
-cost_shortfall <- shortfall_mwh * sim_elec 
-
-# Fixed Maintenance/Land costs and Carbon penalties for grid-purchased backup
-cost_opex_fixed <- 150000 
-emission_factor <- 0.4 
-cost_carbon     <- shortfall_mwh * emission_factor * sim_carb 
-
-# [Q2.a.iii]: Net Operating Cash Flow (NOCF)
-base_nocf <- (rev_ppa + rev_merchant) - (cost_shortfall + cost_opex_fixed + cost_carbon)
-
-# ------------------------------------------------------------------------------
-# SCENARIO SELECTOR: [Q2] Unhedged, [Q4] Hedged, [Q5] Stressed
-# ------------------------------------------------------------------------------
-forecast_idx <- 2:61
-nocf_matrix  <- base_nocf[forecast_idx, ]
-
-if (exists("stress_test_mode") && stress_test_mode == TRUE) {
-  # [Q5.a/b]: Manual override of correlation to 0.0 (already handled in simulation engine)
-  mode_label  <- "STRESSED UNHEDGED"
-} else if (exists("hedge_cashflow_calculator") && hedge_cashflow_calculator == TRUE) {
-  # [Q4.a]: Owning the derivative strip. Add monthly payoffs if knocked-in/exercised.
-  nocf_matrix <- nocf_matrix + payoff_matrix
-  mode_label  <- "HEDGED"
-} else {
-  # [Q2.a]: Standard Unhedged Evaluation
-  mode_label  <- "UNHEDGED"
-}
-
-# ------------------------------------------------------------------------------
-# Q2.a.iv, Q2.c, & Q2.d: DISTRESS EVENTS AND INJECTION COSTS
-# ------------------------------------------------------------------------------
-debt_service <- project_params$monthly_coupon
-
-# [Q2.c]: Probability of Distress (Percentage of months across all simulations)
-distress_matrix       <- nocf_matrix < debt_service 
-prob_distress_monthly <- mean(distress_matrix)
-
-# [Q2.a.iv]: Cost of required injections (including distress penalty)
-# Math: Gap = Debt - Cash; Injection = Gap * 1.10
-cash_gap_raw      <- pmax(0, debt_service - nocf_matrix)
-
-# THE CONFORMABILITY FIX: Explicitly cast as a 60x10000 matrix
-equity_injections <- matrix(cash_gap_raw * (1 + project_params$distress_fee), 
-                            nrow = 60, ncol = n_paths)
-
-# [Q2.d]: Distribution of the Cumulative Cost of Distress across simulations
-cumulative_cost_of_distress <- colSums(equity_injections)
-
-# ------------------------------------------------------------------------------
-# Q2.a.v: FINAL DIVIDEND TO EQUITY (ROBUST VERSION)
-# ------------------------------------------------------------------------------
-# 1. Calculate base dividends (Excess cash above monthly interest)
-# Ensure nocf_matrix and debt_service are subtracted correctly
-dividends_raw <- pmax(0, nocf_matrix - debt_service)
-
-# 2. THE FIX: Explicitly cast as a matrix to prevent "dimension dropping"
-# This ensures R knows there are 60 rows and 10,000 columns
-dividends <- matrix(dividends_raw, nrow = 60, ncol = n_paths)
-
-# 3. Apply Bullet Principal Repayment at Month 60
-# Now that it's a matrix, the [60, ] index will work perfectly
-dividends[60, ] <- pmax(0, dividends[60, ] - project_params$debt_principal)
-
-# 4. Net Shareholder Flow calculation
-# [Q2.a.v]: Both are now forced 60x10000 matrices; the subtraction will now work.
-shareholder_net_flow <- dividends - equity_injections
-
-# ------------------------------------------------------------------------------
-# Q2.b & Q4.b: EXPECTED NPV OF THE EQUITY
-# ------------------------------------------------------------------------------
-# [Q2.b]: Use discount rate of 12% for equity valuation
-r_equity_annual  <- 0.12
-r_monthly        <- r_equity_annual / 12
-discount_factors <- 1 / (1 + r_monthly)^(1:n_months)
-
-path_npv <- colSums(shareholder_net_flow * discount_factors)
-
-# [Q4.b]: Deduct upfront Fair Value (premium) of the derivative at T=0
-if (mode_label == "HEDGED") {
-  path_npv <- path_npv - fair_value_hedge
-}
-
-# [Q2.b]: Expected NPV and 95% Confidence Bounds
-expected_npv  <- mean(path_npv)
-npv_95_bounds <- quantile(path_npv, probs = c(0.025, 0.975))
-
-# ------------------------------------------------------------------------------
-# Q2.c / Q4.c / Q5.c: CUMULATIVE RISK ARCHIVING (The Default Curve)
-# ------------------------------------------------------------------------------
-# 1. 'cumany' checks if a simulation path HAS EVER hit distress up to month T
-# apply(..., 2, ...) runs this for each of the 10,000 paths
-path_has_ever_defaulted <- apply(distress_matrix, 2, cumany)
-
-# 2. rowMeans calculates the % of paths in default at each month (1 to 60)
-cum_prob_distress_vector <- rowMeans(path_has_ever_defaulted)
-
-# 3. Archive based on the active Scenario
+# Routes the script to use either the Base or Stressed simulation universe.
 if (mode_label == "UNHEDGED") {
-  expected_npv_unhedged       <- expected_npv
-  prob_distress_unhedged      <- prob_distress_monthly
-  cum_prob_distress_unhedged  <- cum_prob_distress_vector # FIXES THE ERROR
+  univ       <- sim_universe_base
+  run_hedge  <- FALSE
+  hedge_cost <- 0
+  cat(">>> DATA LOADED: Base Universe (Unhedged)\n")
+  
 } else if (mode_label == "HEDGED") {
-  expected_npv_hedged         <- expected_npv
-  prob_distress_hedged        <- prob_distress_monthly
-  cum_prob_distress_hedged    <- cum_prob_distress_vector # FIXES THE ERROR
+  univ       <- sim_universe_base
+  run_hedge  <- TRUE
+  hedge_cost <- hedge_base$fair_value
+  cat(">>> DATA LOADED: Base Universe + Hedge Payouts (Hedged)\n")
+  
 } else if (mode_label == "STRESSED UNHEDGED") {
-  expected_npv_stressed       <- expected_npv
-  prob_distress_stressed      <- prob_distress_monthly
-  cum_prob_distress_stressed  <- cum_prob_distress_vector # FIXES THE ERROR
+  univ       <- sim_universe_stressed
+  run_hedge  <- FALSE
+  hedge_cost <- 0
+  cat(">>> DATA LOADED: Stressed Universe (Unhedged)\n")
+  
+} else {
+  stop("FATAL ERROR: Invalid mode_label passed to Calculation script.")
 }
 
 # ------------------------------------------------------------------------------
-# Q2.d / Q5.b: FINAL REPORTS
+# 2. FINANCIAL PARAMETERS & BASE ASSUMPTIONS
 # ------------------------------------------------------------------------------
+n_paths  <- ncol(univ$sim_elec)
+n_months <- 60 # 5 Years
+
+# Unpack centralized project_params (Make sure these are updated in Data Prep!)
+cap_wind        <- project_params$cap_wind
+cap_gas         <- project_params$cap_gas
+demand_ppa      <- project_params$demand_ppa
+hours_mo        <- project_params$hours_mo
+debt_principal  <- project_params$debt_principal
+monthly_coupon  <- project_params$monthly_coupon
+distress_fee    <- project_params$distress_fee
+
+# Unpack Operational Assumptions
+wind_opex_mwh   <- project_params$wind_opex_mwh   
+gas_opex_mwh    <- project_params$gas_opex_mwh    
+emission_factor <- project_params$emission_factor 
+
+# Capital Structure
+equity_upfront  <- 40 * 1e6 # €40 Million
+
+# Discrete Compounding Rates
+r_annual_rf  <- 0.02 # 2% Annual Risk-free rate
+r_annual_eq  <- 0.12 # 12% Expected Return on Equity
+
+# Convert Annual to Monthly Discrete Rates
+r_monthly_rf <- (1 + r_annual_rf)^(1/12) - 1
+r_monthly_eq <- (1 + r_annual_eq)^(1/12) - 1
+
+# Pre-allocate tracking matrices
+A_t               <- matrix(0, nrow = n_months + 1, ncol = n_paths)
+equity_injections <- matrix(0, nrow = n_months, ncol = n_paths)
+
+# Initial balance at Month 0 is exactly €0
+A_t[1, ] <- 0 
+
+# ------------------------------------------------------------------------------
+# 3. THE 60-MONTH WATERFALL LOOP
+# ------------------------------------------------------------------------------
+for (t in 1:n_months) {
+  
+  # --- A. PRODUCTION LOGIC ---
+  wind_gen_mw <- univ$sim_util[t+1, ] * cap_wind
+  
+  # Priority: Data Center is supplied first by Wind
+  wind_to_dc  <- pmin(wind_gen_mw, demand_ppa)
+  
+  # Backup: Gas Peaker fills exact deficit if Wind < 50 MW
+  gas_to_dc   <- pmax(demand_ppa - wind_gen_mw, 0)
+  
+  # Excess: Any wind generation > 50 MW
+  excess_wind <- pmax(wind_gen_mw - demand_ppa, 0)
+  
+  # --- B. REVENUE LOGIC ---
+  # Data Center priced at Monthly Average Spot Price with 20% discount (p_ppa)
+  rev_dc       <- (wind_to_dc + gas_to_dc) * hours_mo * univ$p_ppa
+  
+  # Excess sold to grid at Monthly Average Spot Price (no discount)
+  rev_merchant <- excess_wind * hours_mo * univ$sim_elec[t+1, ]
+  
+  total_rev    <- rev_dc + rev_merchant
+  
+  # --- C. OPERATING COSTS ---
+  # Wind maintenance and operating costs of €20/MWh
+  cost_wind   <- wind_gen_mw * hours_mo * wind_opex_mwh
+  
+  # Gas operating costs are €45/MWh + direct fuel cost + carbon costs
+  # Gas price is quoted directly in MWh, no heat rate needed
+  cost_gas    <- gas_to_dc * hours_mo * (
+    gas_opex_mwh + 
+      univ$sim_gas[t+1, ] + 
+      (univ$sim_carb[t+1, ] * emission_factor)
+  )
+  
+  total_opex  <- cost_wind + cost_gas
+  
+  # --- D. HEDGE PAYOUT ---
+  payout_hedge <- if (run_hedge) hedge_base$payoff_matrix[t, ] else 0
+  
+  # --- E. NET CASH FLOW ---
+  net_cf <- total_rev + payout_hedge - total_opex - monthly_coupon
+  
+  # --- F. CASH ACCOUNT & DISTRESS MECHANISM ---
+  # Balance earns risk-free rate monthly
+  potential_balance <- (A_t[t, ] * (1 + r_monthly_rf)) + net_cf
+  
+  # Check for deficits
+  deficit_paths <- potential_balance < 0
+  
+  # Emergency Injection to bring balance back to zero
+  equity_injections[t, deficit_paths] <- abs(potential_balance[deficit_paths])
+  
+  # Reset deficit paths to €0, profitable paths keep positive cash
+  A_t[t+1, ] <- pmax(potential_balance, 0)
+}
+
+# ------------------------------------------------------------------------------
+# 4. FINAL EQUITY VALUATION (NPV)
+# ------------------------------------------------------------------------------
+# Discount cash flows using the given cost of equity
+months_vec       <- 1:n_months
+discount_factors <- 1 / (1 + r_monthly_eq)^months_vec
+
+# --- A. Final Dividend to Equity (Month 60) ---
+# Payoff = max(0, A_60 - Principal Repayment)
+final_payoff    <- pmax(0, A_t[61, ] - debt_principal)
+pv_final_payoff <- final_payoff * discount_factors[60]
+
+# --- B. Present Value of Emergency Injections ---
+# Cost of Distress: Equity Holders pay €1.10 for every €1.00 injected
+pv_injections   <- colSums(equity_injections * (1 + distress_fee) * discount_factors)
+
+# --- C. Net Present Value of the SPV ---
+# Expected NPV of Equity requires deducting PV of injections
+# If hedged, deduct the upfront cost of the derivative strip
+path_npvs       <- pv_final_payoff - pv_injections - equity_upfront - hedge_cost
+
+# ------------------------------------------------------------------------------
+# 5. RISK METRICS EXTRACTION
+# ------------------------------------------------------------------------------
+# Q2c: Probability of Distress: percentage of months across all simulations
+total_distress_months <- sum(equity_injections > 0)
+prob_distress_months  <- total_distress_months / (n_months * n_paths)
+
+# Q2d: Cumulative Cost of Distress
+# Calculates just the 10% penalty fee explicitly
+cum_cost_distress_penalty <- colSums(equity_injections * distress_fee)
+
+# ------------------------------------------------------------------------------
+# 6. ARCHIVE RESULTS 
+# ------------------------------------------------------------------------------
+current_output <- list(
+  npv_dist          = path_npvs,
+  expected_npv      = mean(path_npvs),
+  prob_distress     = prob_distress_months,
+  cum_cost_distress = cum_cost_distress_penalty,
+  a_t_matrix        = A_t
+)
+
+if (mode_label == "UNHEDGED") {
+  results_unhedged <- current_output
+} else if (mode_label == "HEDGED") {
+  results_hedged <- current_output
+} else if (mode_label == "STRESSED UNHEDGED") {
+  results_stressed <- current_output
+}
+
+# ------------------------------------------------------------------------------
+# 7. Q2.b / Q2.d / Q5.b: FINAL REPORTS
+# ------------------------------------------------------------------------------
+# 95% confidence interval for highest and lowest NPV
+npv_95_bounds <- quantile(path_npvs, probs = c(0.025, 0.975))
+
+expected_npv                <- mean(path_npvs)
+prob_distress_monthly       <- prob_distress_months
+cumulative_cost_of_distress <- cum_cost_distress_penalty
+
 cat("\n==========================================\n")
 cat("PROJECT SUMMARY:", mode_label, "\n")
 cat("==========================================\n")
-cat(sprintf("Expected Equity NPV:          €%s\n", format(round(expected_npv, 2), big.mark=",")))
-cat(sprintf("95%% Conf. Interval:           €%s to €%s\n", 
+cat(sprintf("Expected Equity NPV:           €%s\n", format(round(expected_npv, 2), big.mark=",")))
+cat(sprintf("95%% Conf. Interval:            €%s to €%s\n", 
             format(round(npv_95_bounds[1], 2), big.mark=","), 
             format(round(npv_95_bounds[2], 2), big.mark=",")))
 cat(sprintf("Monthly Prob. of Distress:     %s%%\n", round(prob_distress_monthly * 100, 2)))

@@ -1,55 +1,72 @@
 # ==============================================================================
-# TASK 4d: HEDGE OPTIMIZATION (CLEANED DIMENSIONS)
+# TASK 4d: HEDGE OPTIMIZATION (THE "SWEET SPOT" FINDER)
 # ==============================================================================
 
-# Ensure we have exactly 60 months of base cash flow (T=1 to T=60)
-# This prevents "non-conformable" errors and "out of bounds" errors
-base_nocf_forecast <- matrix(base_nocf[2:61, ], nrow = 60, ncol = n_paths)
+# Define the range of hedge coverage (0% to 100% of the 50MW obligation)
+hedge_ratios <- seq(0, 1, by = 0.2) # 0%, 20%, 40%, 60%, 80%, 100%
+opt_results  <- data.frame()
 
-hedge_ratios <- seq(0, 1, by = 0.25)
-opt_results <- data.frame()
-
-cat("\n--- STARTING HEDGE OPTIMIZATION LOOP ---\n")
+cat("\n--- STARTING STRESS-TESTED OPTIMIZATION LOOP ---\n")
 
 for (ratio in hedge_ratios) {
   
-  # 1. Scale the monthly payoffs by the hedge ratio
-  current_payoff <- payoff_matrix * ratio
+  # 1. Update the local environment variables
+  # We scale the payoff matrix calculated in Task 3 by the ratio
+  # Note: hedge_cost (upfront premium) must also be scaled by the ratio
+  current_ratio_payoffs <- hedge_base$payoff_matrix * ratio
+  current_ratio_premium <- hedge_base$fair_value * ratio
   
-  # 2. Add to forecast base (Both are now 60x10000)
-  current_nocf <- base_nocf_forecast + current_payoff
+  # 2. RUN MINI-WATERFALL 
+  # (Simulating the logic from Task 2 but with the scaled hedge)
   
-  # 3. Calculate NPV (Use current_nocf directly; it is already 60 rows)
-  # Ensure discount_factors is length 60
-  path_npvs   <- colSums(current_nocf * as.vector(discount_factors[1:60]))
-  current_npv <- mean(path_npvs)
+  # Pre-allocate for this specific ratio
+  A_t_opt      <- matrix(0, nrow = n_months + 1, ncol = n_paths)
+  inj_opt      <- matrix(0, nrow = n_months, ncol = n_paths)
   
-  # 4. Calculate Cumulative Risk (Life-cycle)
-  curr_distress  <- current_nocf < debt_service
-  # Identify paths that hit distress at any point up to month 60
-  curr_ever_fail <- apply(curr_distress, 2, any) 
-  current_risk   <- mean(curr_ever_fail)
+  for (t in 1:n_months) {
+    # Calculate NOCF (Using logic from Task 2 script)
+    # [Revenue - OPEX - Coupon + (Hedge Payoff * Ratio)]
+    # ... (Logic assumed to be identical to your main waterfall) ...
+    
+    # For speed in this loop, we can simplify the NOCF calculation 
+    # if you have the base_nocf already saved from the UNHEDGED run:
+    net_cf <- results_unhedged$monthly_nocf[t, ] + current_ratio_payoffs[t, ]
+    
+    # Cash Account Logic
+    pot_bal <- (A_t_opt[t, ] * (1 + r_monthly_rf)) + net_cf
+    deficits <- pot_bal < 0
+    inj_opt[t, deficits] <- abs(pot_bal[deficits])
+    A_t_opt[t+1, ] <- pmax(pot_bal, 0)
+  }
   
-  # 5. Store Results
+  # 3. VALUATION
+  payout_60    <- pmax(0, A_t_opt[61, ] - debt_principal)
+  pv_payout    <- payout_60 / (1 + r_monthly_eq)^60
+  pv_penalties <- colSums(inj_opt * (1 + distress_fee) / (1 + r_monthly_eq)^(1:60))
+  
+  # Net NPV for this specific ratio
+  path_npvs_opt <- pv_payout - pv_penalties - equity_upfront - current_ratio_premium
+  
+  # 4. STORE METRICS
   opt_results <- rbind(opt_results, data.frame(
-    Hedge_Ratio  = paste0(ratio * 100, "%"),
-    Expected_NPV = current_npv,
-    Final_Risk   = current_risk
+    Hedge_Ratio      = paste0(ratio * 100, "%"),
+    Expected_NPV     = mean(path_npvs_opt),
+    Prob_of_Distress = sum(inj_opt > 0) / (n_months * n_paths),
+    Avg_Penalty_Paid = mean(colSums(inj_opt * distress_fee))
   ))
 }
 
 # ------------------------------------------------------------------------------
-# 6. EFFICIENCY ANALYSIS
+# 5. ANALYSIS: FIND THE WINNER
 # ------------------------------------------------------------------------------
-base_risk <- opt_results$Final_Risk[1]
-base_npv  <- opt_results$Expected_NPV[1]
-
-opt_results$Risk_Reduced_pct <- (base_risk - opt_results$Final_Risk) * 100
-opt_results$Cost_of_Hedge      <- base_npv - opt_results$Expected_NPV
-
-# Efficiency: Points of risk removed per €1,000 of NPV cost
-opt_results$Efficiency_Score <- ifelse(opt_results$Cost_of_Hedge > 0, 
-                                       opt_results$Risk_Reduced_pct / (opt_results$Cost_of_Hedge / 1000), 
-                                       0)
+# Efficiency: Which ratio results in the highest Expected NPV?
+# (Usually, there's a peak where the benefit of avoiding the 10% penalty 
+# outweighs the cost of the hedge premium).
+best_ratio <- opt_results[which.max(opt_results$Expected_NPV), ]
 
 print(opt_results, row.names = FALSE)
+cat("\n------------------------------------------------------------------------------\n")
+cat(sprintf("OPTIMIZATION RESULT: The most efficient hedge is %s.\n", best_ratio$Hedge_Ratio))
+cat(sprintf("This ratio maximizes NPV at €%s by balancing protection vs cost.\n", 
+            format(round(best_ratio$Expected_NPV, 0), big.mark=",")))
+cat("==============================================================================\n")
