@@ -1,128 +1,125 @@
 # ==============================================================================
-# TASK 1: STATISTICAL DIAGNOSIS (CORRECTED)
+# TASK 1: STATISTICAL DIAGNOSIS (STABILITY PATCH)
 # ==============================================================================
 
-## so fat tail is testing essentially if we have tails on our distribution. 
-## if the kurt_val is bigger 0.5 we may have fat tails. if its smaller we 
-## assume a normal distribution. same with the pvalue box test. if its smaller 
-## 0.05 we assume that high risk clusters together while pvlaue bigger 0.05 is 
-## randomness. we check if we ahve randomness in the p value  (smaller 0.05) or 
-## the curt val is bigger than one (fat tails). in our case nothing applies so we can use linear
+# 1. ENSURE DATA IS ACCESSIBLE
+# Replace 'returns_df' with whatever your actual data object is named
+target_vars <- c("Electricity", "NaturalGas", "Carbon", "WindUtilization")
 
-# 1. Extract and Clean Data
-ret_elec <- na.omit(returns_df$Electricity)
+# Initialize results
+diagnosis_results <- data.frame()
+garch_votes       <- 0 
 
-# 2. Calculate Diagnostic KPIs
-mu_elec    <- mean(ret_elec)
-sigma_elec <- sd(ret_elec)
+cat("\n", rep("=", 60), "\n")
+cat("TASK 1: MULTI-VARIABLE STATISTICAL DIAGNOSTIC REPORT\n")
+cat(rep("=", 60), "\n\n")
 
-# KPI: Excess Kurtosis (using moments package or manual calculation)
-# We ensure the variable name is consistent: kurt_val
-kurt_val   <- moments::kurtosis(ret_elec) - 3
-
-# KPI: ARCH Effect (Ljung-Box Test on squared returns)
-# We calculate this specifically to use in the cat() report
-arch_test  <- Box.test(ret_elec^2, lag = 12, type = "Ljung-Box")
-
-# KPI: Volatility Correlation (Lag-1)
-sq_ret_lag  <- ret_elec[1:(length(ret_elec)-1)]^2
-sq_ret_curr <- ret_elec[2:length(ret_elec)]^2
-vol_corr    <- cor(sq_ret_curr, sq_ret_lag)
-
-# 3. Diagnostic Summary Table
-diagnosis_results <- data.frame(
-  Metric = c("Mean Return", "Avg Volatility (Sigma)", "Excess Kurtosis", "Vol Correlation (Lag-1)"),
-  Value  = c(mu_elec, sigma_elec, kurt_val, vol_corr),
-  Interpretation = c(
-    "Expected monthly drift",
-    "Standard risk level",
-    "High value = Higher risk of Default/Distress",
-    "> 0.1 indicates ARCH/GARCH is necessary"
+message("Analyzing every variable to find the optimal Simulation Model")
+# 2. THE STABILIZED DIAGNOSTIC LOOP
+for (var in target_vars) {
+  
+  # SAFETY CHECK: Does the column exist?
+  if (!(var %in% names(returns_df))) {
+    warning(paste("Column", var, "not found in data. Skipping."))
+    next
+  }
+  
+  # THE FIX: Force coercion to a numeric vector [[var]] can sometimes return a tibble
+  # as.numeric(as.matrix(...)) is the 'nuclear option' to ensure it is a simple vector
+  raw_data <- returns_df[[var]]
+  ret_var  <- as.numeric(na.omit(raw_data))
+  
+  # Check if we actually have enough data points to run a test
+  if (length(ret_var) < 20) {
+    warning(paste("Variable", var, "has too few observations."))
+    next
+  }
+  
+  # 3. CALCULATE KPIs
+  mu_val    <- mean(ret_var)
+  sigma_val <- sd(ret_var)
+  kurt_val  <- moments::kurtosis(ret_var) - 3
+  
+  # ARCH Effect (Ljung-Box Test on squared returns)
+  # Ensure we use at least a few lags
+  arch_test <- Box.test(ret_var^2, lag = 12, type = "Ljung-Box")
+  p_val     <- arch_test$p.value
+  
+  # Logical Triggers
+  has_fat_tails  <- kurt_val > 0
+  has_clustering <- p_val < 0.05
+  needs_garch    <- has_fat_tails | has_clustering
+  
+  if (needs_garch) garch_votes <- garch_votes + 1
+  
+  # 4. APPEND RESULTS
+  # Using stringsAsFactors=FALSE to keep it stable
+  new_row <- data.frame(
+    Variable        = var,
+    Mean_Return     = round(mu_val, 4),
+    Volatility      = round(sigma_val, 4),
+    Excess_Kurtosis = round(kurt_val, 4),
+    ARCH_p_value    = round(p_val, 6),
+    Fat_Tails       = ifelse(has_fat_tails, "YES (>0)", "NO"),
+    Vol_Clustering  = ifelse(has_clustering, "YES (<0.05)", "NO"),
+    stringsAsFactors = FALSE
   )
-)
+  diagnosis_results <- rbind(diagnosis_results, new_row)
+}
 
+message("Simulation Done; Compiling Results")
+# Print the final consolidated table
 print(diagnosis_results)
 
-# 4. Visual Diagnosis
-if(!is.null(dev.list())) dev.off() 
-par(mfrow = c(2, 1), mar = c(3, 4, 2, 1), oma = c(0, 0, 2, 0))
+# 5. VISUAL DIAGNOSIS
+# Clear any stuck graphics devices before starting
+while(!is.null(dev.list())) dev.off() 
+par(mfrow = c(2, 2), mar = c(3, 4, 3, 1), oma = c(0, 0, 2, 0))
 
-# Plot 1: Standard Returns
-plot(ret_elec, type = "l", col = "darkblue", lwd = 1,
-     main = "Time Series of Electricity Returns", ylab = "Return (%)", xlab = "")
-abline(h = mu_elec, col = "orange", lty = 2, lwd = 2)
+colors <- c("Electricity" = "darkblue", "NaturalGas" = "darkred", "Carbon" = "darkgreen", "WindUtilization" = "purple")
 
-# Plot 2: Squared Returns
-plot(ret_elec^2, type = "l", col = "darkred", lwd = 1,
-     main = "Squared Returns (Volatility Proxy)", ylab = "Sq Return", xlab = "Months")
-abline(h = mean(ret_elec^2), col = "gray", lty = 3)
-
-mtext("Statistical Diagnostic: Linear vs. GARCH Suitability", outer = TRUE, cex = 1.2, font = 2)
-
-# 5. Interpretation Report (Using Corrected Variable Names)
-cat("\n", rep("=", 50), "\n")
-cat("TASK 1: STATISTICAL DIAGNOSTIC REPORT\n")
-cat(rep("=", 50), "\n\n")
-
-cat("1. MEAN & DRIFT:\n")
-cat("   - Average Monthly Return:", round(mu_elec * 100, 4), "%\n")
-cat("   - Interpretation: Baseline drift for simulation.\n\n")
-
-cat("2. TAIL RISK (Kurtosis):\n")
-cat("   - Excess Kurtosis:", round(kurt_val, 4), "\n")
-cat("   - Interpretation:", ifelse(kurt_val > 0.5, 
-                                   "FAT TAILS detected. Extreme shocks (Task 5 Distress) are likely.", 
-                                   "Normal tails. Linear assumptions are safer."), "\n\n")
-
-cat("3. VOLATILITY CLUSTERING (ARCH-Effect):\n")
-cat("   - Ljung-Box p-value:", round(arch_test$p.value, 6), "\n")
-cat("   - Interpretation:", ifelse(arch_test$p.value < 0.05,
-                                   "SIGNIFICANT CLUSTERING. Use GARCH(1,1).",
-                                   "No clustering. Linear/Random Walk is sufficient."), "\n\n")
-
-cat("4. MODEL SELECTION VERDICT:\n")
-# Choosing model based on p-value and Kurtosis
-final_model <- ifelse(arch_test$p.value < 0.05 | kurt_val > 1, "GARCH(1,1)", "Linear/Random Walk")
-cat("   - Primary Model: ", final_model, "\n")
-cat("   - Reasoning: Capturing volatility spikes is vital for Task 4 & 5 accuracy.\n")
-cat(rep("=", 50), "\n")
+for (var in diagnosis_results$Variable) {
+  # Re-extract for plotting
+  ret_var <- as.numeric(na.omit(returns_df[[var]]))
+  plot(ret_var^2, type = "l", col = colors[var], 
+       main = paste(var, "(Sq. Returns)"), ylab = "Sq Return", xlab = "")
+}
+mtext("Volatility Clustering Check", outer = TRUE, cex = 1.2, font = 2)
 
 # ==============================================================================
-# TASK 1: STATISTICAL REASONING & MODEL SELECTION LOGIC
+# TASK 1: FINAL MODEL SELECTION VERDICT
 # ==============================================================================
 
-# 1. MEAN & DRIFT REASONING:
-# -------------------------
-# The mean (mu) represents the 'deterministic' part of the price path.
-# - LIMITATION: In a Random Walk, we assume prices 'drift' at a constant rate.
-# - PROJECT IMPACT: If the mean is positive, the project looks profitable on 
-#   average, but the mean tells us nothing about the 'sequence of returns'. 
-#   In an SPV, a high mean won't save you if you hit a cluster of bad months 
-#   early on (Task 5 Distress).
+cat("\n", rep("-", 60), "\n")
+cat("FINAL INTEGRATED MODEL VERDICT\n")
+cat(rep("-", 60), "\n")
 
-# 2. EXCESS KURTOSIS (THE "FAT TAIL" LIMIT):
-# ------------------------------------------
-# - THRESHOLD: Excess Kurtosis > 0 indicates 'Leptokurtic' behavior.
-# - LINEAR LIMIT: A Linear/Random Walk model assumes a Normal Distribution.
-#   In a normal curve, extreme events (shocks > 3 standard deviations) are 
-#   statistically 'impossible'.
-# - GARCH ADVANTAGE: High kurtosis implies that 'Black Swan' price spikes occur 
-#   more often than the bell curve predicts. GARCH allows us to model these 
-#   shocks, ensuring our Task 5 cash flow projections aren't 'too optimistic'.
+# Logic: Count how many variables triggered a 'GARCH' requirement
+garch_triggers <- sum(diagnosis_results$Fat_Tails == "YES (>0)" | 
+                        diagnosis_results$Vol_Clustering == "YES (<0.05)")
 
-# 3. P-VALUE & ARCH EFFECTS (THE "MEMORY" TEST):
-# ----------------------------------------------
-# We use the Ljung-Box test on squared returns to check for autocorrelation.
-# - P-VALUE > 0.05: Implies 'White Noise'. Volatility is random. Today's shock 
-#   does not change tomorrow's risk. Linear models (Random Walk) are sufficient.
-# - P-VALUE < 0.05: Implies 'Volatility Clustering'. High-risk periods tend to 
-#   cluster together in waves.
-# - WHY GARCH: A Random Walk is 'memoryless'. GARCH captures 'Risk Persistence'.
-#   For our SPV, if Gas prices spike in Month 10, GARCH ensures they stay high 
-#   for Month 11 and 12, testing the project's liquidity (Task 5) more rigorously.
+cat(sprintf("- Total Variables Analyzed: %d\n", nrow(diagnosis_results)))
+cat(sprintf("- Variables with High-Risk Signatures: %d\n", garch_triggers))
 
-# 4. FINAL VERDICT RATIONALE:
-# ---------------------------
-# We choose GARCH(1,1) over Linear/Random Walk if (p-value < 0.05) OR (Kurtosis > 1).
-# This ensures that our Monte Carlo paths reflect the 'volatile streaks' 
-# common in energy markets, rather than just independent monthly 'vibrations'.
+# --- THE DECISION ENGINE ---
+if (garch_triggers > 0) {
+  # VERDICT: USE GARCH(1,1)
+  cat("\n>>> PRIMARY VERDICT: GARCH(1,1) / NON-LINEAR SIMULATION <<<\n\n")
+  cat("REASONING:\n")
+  cat(paste("1. We identified high-risk signatures in", garch_triggers, "variable(s).\n"))
+  cat("2. Because Electricity, Gas, and Carbon are coupled in the Waterfall loop,\n")
+  cat("   ignoring the 'memory' (Clustering) or 'shocks' (Fat Tails) of one variable\n")
+  cat("   would lead to a biased 'Spark Spread' calculation.\n")
+  cat("3. GARCH(1,1) is required to capture 'Volatility Persistence'—the tendency\n")
+  cat("   for high-cost/low-revenue periods to arrive in clusters, which is the \n")
+  cat("   primary driver of Liquidity Distress (Task 5).\n")
+} else {
+  # VERDICT: USE LINEAR / RANDOM WALK
+  cat("\n>>> PRIMARY VERDICT: LINEAR / GEOMETRIC BROWNIAN MOTION <<<\n\n")
+  cat("REASONING:\n")
+  cat("1. All analyzed variables exhibit Excess Kurtosis <= 0 and p-values > 0.05.\n")
+  cat("2. Returns appear to be normally distributed and memoryless.\n")
+  cat("3. A simpler Linear model is sufficient and avoids unnecessary complexity.\n")
+}
+
+cat(rep("=", 60), "\n")

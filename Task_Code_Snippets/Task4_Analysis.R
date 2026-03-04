@@ -10,6 +10,7 @@ if (!exists("results_unhedged") || !exists("results_hedged")) {
 
 # 2. EXTRACT METRICS FROM SAVED LISTS
 # ------------------------------------------------------------------------------
+message("Extracting required metrics from saved lists")
 # Unhedged Metrics
 npv_u           <- results_unhedged$expected_npv
 prob_u          <- results_unhedged$prob_distress
@@ -22,6 +23,7 @@ distress_cost_h <- mean(results_hedged$cum_cost_distress)
 
 # 3. CONSTRUCT TASK 4c COMPARISON TABLE
 # ------------------------------------------------------------------------------
+message("Constructing comparison Table")
 comparison_df <- data.frame(
   Metric = c(
     "Expected Equity NPV (€)", 

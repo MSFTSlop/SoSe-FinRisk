@@ -3,6 +3,7 @@
 # ==============================================================================
 library(readxl)
 library(moments)
+library(rugarch)
 
 ## set your WID manually to the main.R file
 
@@ -11,7 +12,12 @@ returns_df        <- read_excel("data/DataPost_2026.xlsx", sheet = "Returns")
 colnames(last_price_df)[1] <- "Date"
 returns_df <- returns_df[, 1:5] 
 
+message("Initiating Data Preparation")
 source("Task_Code_Snippets/Data_Prep.R")
+
+message("Data Preparation done; Starting model Choice engine")
+source("Task_Code_Snippets/Task1_1_Model_Analysis.R")
+message("Choice complete; initiating selector")
 
 # ==============================================================================
 # UNIFIED SCENARIO SELECTOR
@@ -31,72 +37,74 @@ switch(choice,
          stress_test_mode          <- FALSE
          hedge_cashflow_calculator <- FALSE
          mode_label                <- "UNHEDGED"
+         base_done                 <- TRUE
+         
+         cat(paste(">>> Initializing Scenario:", mode_label, "\n"))
+         
+         message("Starting Base Simulation (used in Base Unhedge and Hedge Scenario)")
+         source("Task_Code_Snippets/Task1_2_Simulation.R")
+         
+         message("Starting Base Hedge (used in Base Unhedge and Hedge Scenario)")
+         source("Task_Code_Snippets/Task3_Exotic_Hedge.R")
+         
+         # This block automatically catches both "UNHEDGED" and "STRESSED UNHEDGED"
+         message("Starting Base Unhedged calculation")
+         source("Task_Code_Snippets/Task2_and_4_Calculation.R")
+         
+         message("Plotting NPV distribution (2b) and cumulative probability of distress (2d)")
+         source("Task_Code_Snippets/Task2_Plot.R")
+         
+         
        },
        "2" = {
-         stress_test_mode          <- FALSE
-         hedge_cashflow_calculator <- TRUE
-         mode_label                <- "HEDGED"
+         ## implementing fail safe
+         if(exists("base_done")) { 
+           stress_test_mode          <- FALSE
+           hedge_cashflow_calculator <- TRUE
+           mode_label                <- "HEDGED"
+           hedge_done                <- TRUE
+           
+           cat(paste(">>> Initializing Scenario:", mode_label, "\n"))
+           
+           message("Using past calculations from the Base Case (unhedged)")
+           
+           # This block automatically catches both "UNHEDGED" and "STRESSED UNHEDGED"
+           message("Starting Base Hedge calculation")
+           source("Task_Code_Snippets/Task2_and_4_Calculation.R")
+           source("Task_Code_Snippets/Task4_Analysis.R")
+           
+           message("Testing optimal hedge levels")
+           #source("Task_Code_Snippets/Task4_optimal_hedge.R")
+           
+         } else {
+           warning("Base case not executed ! Stopping Program")
+         }
        },
        "3" = {
-         stress_test_mode          <- TRUE
-         hedge_cashflow_calculator <- FALSE
-         mode_label                <- "STRESSED UNHEDGED"
+         ## implementing fail safe
+         if(exists("base_done") && exists("hedge_done")) { 
+           stress_test_mode          <- TRUE
+           hedge_cashflow_calculator <- FALSE
+           mode_label                <- "STRESSED UNHEDGED"
+           
+           
+           cat(paste(">>> Initializing Scenario:", mode_label, "\n"))
+           
+           message("Starting Stressed Simulation (used in Stressed Unhedge Scenario)")
+           source("Task_Code_Snippets/Task1_2_Simulation.R")
+           
+           message("Starting Base Hedge (used in Base Unhedge and Hedge Scenario)")
+           source("Task_Code_Snippets/Task3_Exotic_Hedge.R")
+           
+
+           message("Performing Stress Test Analysis")
+           source("Task_Code_Snippets/Task5_Stress_Analysis.R")
+           
+         } else {
+           warning("Base case and/or hedged case not executed ! Stopping Program")
+         }
        },
        { # Default case (like Java's 'default')
          stop("Invalid selection. Script terminated.")
        }
 )
-
-cat(paste(">>> Initializing Scenario:", mode_label, "\n"))
-
-# ==============================================================================
-# 3. EXECUTION CHAIN
-# ==============================================================================
-
-# Task 1: Analysis & Simulation
-message("Start model Choice engine")
-source("Task_Code_Snippets/Task1_1_Model_Analysis.R")
-
-message("Choice complete. Execute Modelling")
-# NOTE: Task 1.2 now checks 'stress_test_mode' to decide on Cor_Mat vs Identity_Mat
-source("Task_Code_Snippets/Task1_2_Simulation.R")
-
-# Task 3: The Hedge (Respects stress_test_mode)
-message("Start Task 3. The Hedge")
-source("Task_Code_Snippets/Task3_Exotic_Hedge.R")
-
-# ==============================================================================
-# Task 2 & 4: Cashflow Waterfall
-# ==============================================================================
-if (mode_label == "HEDGED") {
-  
-  message("Starting hedge Cashflow calculation")
-  source("Task_Code_Snippets/Task2_and_4_Calculation.R")
-  source("Task_Code_Snippets/Task4_Analysis.R")
-  
-  message("Testing optimal hedge levels")
-  source("Task_Code_Snippets/Task4_optimal_hedge.R")
-  
-} else {
-  # This block automatically catches both "UNHEDGED" and "STRESSED UNHEDGED"
-  message("Starting pure calculation")
-  source("Task_Code_Snippets/Task2_and_4_Calculation.R")
-  
-  message("Plotting NPV distribution (2b) and cumulative probability of distress (2d)")
-  source("Task_Code_Snippets/Task2_Plot.R")
-  
-}
-
-# ==============================================================================
-# Task 5: Stress Analysis
-# ==============================================================================
-if (mode_label == "STRESSED UNHEDGED") {
-  
-  message("Performing stress test analysis")
-  source("Task_Code_Snippets/Task5_Stress_Analysis.R")
-  
-} else {
-  
-  message("Stress Test inactive")
-  
-}

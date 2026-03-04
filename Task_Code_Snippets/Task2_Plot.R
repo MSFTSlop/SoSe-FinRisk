@@ -8,6 +8,7 @@ par(mfrow = c(1, 2), mar = c(5, 4, 4, 1))
 # ------------------------------------------------------------------------------
 # PLOT 1 (Q2b & Q4c): NPV DISTRIBUTION (10,000 PATHS)
 # ------------------------------------------------------------------------------
+message("Plotting NPV Distribution")
 # Plotting the Net Present Value in Millions of Euros
 hist(path_npvs / 1e6, breaks = 50, col = "skyblue", border = "white",
      main = paste("Project Equity NPV\n(", mode_label, ")", sep=""),
@@ -26,6 +27,7 @@ abline(v = npv_95_bounds[2] / 1e6, col = "darkgreen", lwd = 2, lty = 2)
 # ------------------------------------------------------------------------------
 # PLOT 2 (Q2d): DISTRIBUTION OF CUMULATIVE COST OF DISTRESS
 # ------------------------------------------------------------------------------
+message("Plottinng distribution of Cumulative cost of distress")
 # We filter out paths with ZERO distress costs to see the actual distribution 
 # of the penalty ONLY when it occurs.
 distress_only_paths <- cumulative_cost_of_distress[cumulative_cost_of_distress > 0]

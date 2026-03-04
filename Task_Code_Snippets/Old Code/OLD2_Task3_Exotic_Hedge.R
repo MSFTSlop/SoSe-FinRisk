@@ -15,8 +15,6 @@ if (current_mode_label == "BASE" && !exists("sim_universe_base")) {
 
 # 1. EXTRACT SECURED MATRICES (EXPLICIT ROUTING)
 # ------------------------------------------------------------------------------
-message("Extracting Case Specific Variables")
-
 switch(current_mode_label,
        "BASE" = {
          sim_elec <- sim_universe_base$sim_elec
@@ -30,22 +28,18 @@ switch(current_mode_label,
        }
 )
 
-message("Calculating the mathematical logic")
-
 # 2. THE PAYOFF LOGIC (Consistent for both scenarios)
 # ------------------------------------------------------------------------------
 spread_matrix  <- sim_gas[2:61, ] - sim_elec[2:61, ] 
-trigger_matrix <- sim_util[2:61, ] < 0.40            
+trigger_matrix <- sim_util[2:61, ] < 0.40           
 mwh_volume     <- 50 * 720                           
 payoff_matrix  <- trigger_matrix * pmax(0, spread_matrix) * mwh_volume
 
-# 3. DISCOUNTING TO FAIR VALUE (ISSUE 9 FIX APPLIED)
+# 3. DISCOUNTING TO FAIR VALUE
 # ------------------------------------------------------------------------------
-r_annual       <- 0.02
-# Fixed: Using discrete compounding to match Task 2 consistency
-r_monthly      <- (1 + r_annual)^(1/12) - 1 
+r_monthly      <- 0.02 / 12
 discount_vec   <- 1 / (1 + r_monthly)^(1:60)
-path_hedge_pvs <- colSums(sweep(payoff_matrix, 1, discount_vec, FUN = "*"))
+path_hedge_pvs <- colSums(payoff_matrix * discount_vec)
 fv_hedge       <- mean(path_hedge_pvs)
 
 # 4. ARCHIVING & THE AUDIT REPORT
@@ -108,21 +102,49 @@ cat("================================================================\n")
 # ==============================================================================
 # 5. WORKSPACE SANITIZATION (THE COURTESY CLEANUP)
 # ==============================================================================
-# Determine which correlation variables exist so we don't throw an error when removing them
-message("Cleanup after Calculation")
+# Remove temporary matrices and variables to prevent memory leaks and ghost data.
 
+# Determine which correlation variables exist so we don't throw an error when removing them
 vars_to_remove <- c("sim_elec", "sim_gas", "sim_util", "spread_matrix", 
                     "trigger_matrix", "payoff_matrix", "path_hedge_pvs", 
-                    "current_hedge", "r_annual", "r_monthly", "discount_vec", "fv_hedge", 
+                    "current_hedge", "r_monthly", "discount_vec", "fv_hedge", 
                     "mwh_volume", "current_mode_label")
 
-if(exists("base_done") && exists("hedge_done")) {
-  message("Removing all heavy weight matrices.")
-  if (exists("corr_base")) vars_to_remove <- c(vars_to_remove, "corr_base")
-  if (exists("corr_stressed")) vars_to_remove <- c(vars_to_remove, "corr_stressed")
-  if (exists("impact_val")) vars_to_remove <- c(vars_to_remove, "impact_val")
-}
+if (exists("corr_base")) vars_to_remove <- c(vars_to_remove, "corr_base")
+if (exists("corr_stressed")) vars_to_remove <- c(vars_to_remove, "corr_stressed")
+if (exists("impact_val")) vars_to_remove <- c(vars_to_remove, "impact_val")
 
 rm(list = vars_to_remove)
 
 cat(">>> Workspace sanitized. Temporary Task 3 variables cleared.\n")
+
+# ==============================================================================
+# DATA LINEAGE & VARIABLE ANCESTRY (TASK 1 -> TASK 2 -> TASK 3)
+# ==============================================================================
+# To ensure mathematical consistency across the project, all Task 3 variables 
+# are derived from a single "Source of Truth" established in Tasks 1 and 2:
+#
+# 1. THE ANCHORS (T=0: January 2026):
+#    - p_elec_0 (135.02), p_gas_0 (75.705), p_carb_0 (79.8), u_wind_0 (0.3789).
+#    - These are the last known real-world data points from your Excel 'Last_Price'.
+#
+# 2. THE SIMULATION ENGINES (Task 1.2):
+#    - sim_elec & sim_gas: Generated via Geometric Brownian Motion (GBM). 
+#      They evolve from the T=0 Anchors using the Drift (mu) and Volatility (sigma) 
+#      calculated from the historical 'Returns' dataframe.
+#    - sim_util: Generated via an Additive Random Walk in Logit-Space (l_wind_0).
+#      The results were transformed back to [0,1] using the Sigmoid function:
+#      inv_logit = exp(L) / (1 + exp(L)).
+#
+# 3. THE REVENUE STACK (Task 2):
+#    - Used sim_util and sim_elec to calculate 'rev_total'.
+#    - Established the 50MW PPA / 125MW Capacity relationship.
+#
+# 4. THE HEDGE UNDERLYING (Task 3):
+#    - sim_gas & sim_elec: Used here to calculate the "Spark Spread" (Gas - Elec).
+#    - sim_util: Used here to trigger the "Knock-In" (Shortfall if Wind < 40%).
+#
+# VERDICT: By using these forecast matrices instead of historical 'shuffling',
+# Task 3 evaluates the hedge against 10,000 "Possible Futures" rather than 
+# simply re-playing the past.
+# ==============================================================================

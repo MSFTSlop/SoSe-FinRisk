@@ -6,6 +6,8 @@
 # 1. DATA LINEAGE: ROUTING BASED ON MODE LABEL
 # ------------------------------------------------------------------------------
 # Routes the script to use either the Base or Stressed simulation universe.
+message("Initiating Case Specific Variables")
+
 if (mode_label == "UNHEDGED") {
   univ       <- sim_universe_base
   run_hedge  <- FALSE
@@ -31,6 +33,7 @@ if (mode_label == "UNHEDGED") {
 # ------------------------------------------------------------------------------
 # 2. FINANCIAL PARAMETERS & BASE ASSUMPTIONS
 # ------------------------------------------------------------------------------
+message("Initiating base Parameters")
 n_paths  <- ncol(univ$sim_elec)
 n_months <- 60 # 5 Years
 
@@ -69,6 +72,7 @@ A_t[1, ] <- 0
 # ------------------------------------------------------------------------------
 # 3. THE 60-MONTH WATERFALL LOOP
 # ------------------------------------------------------------------------------
+message("Starting the 60 Month Calculation")
 for (t in 1:n_months) {
   
   # --- A. PRODUCTION LOGIC ---
@@ -129,6 +133,7 @@ for (t in 1:n_months) {
 # ------------------------------------------------------------------------------
 # 4. FINAL EQUITY VALUATION (NPV)
 # ------------------------------------------------------------------------------
+message("Calculating the NPV")
 # Discount cash flows using the given cost of equity
 months_vec       <- 1:n_months
 discount_factors <- 1 / (1 + r_monthly_eq)^months_vec
@@ -161,6 +166,7 @@ cum_cost_distress_penalty <- colSums(equity_injections * distress_fee)
 # ------------------------------------------------------------------------------
 # 6. ARCHIVE RESULTS 
 # ------------------------------------------------------------------------------
+message("Archiving Results")
 current_output <- list(
   npv_dist          = path_npvs,
   expected_npv      = mean(path_npvs),

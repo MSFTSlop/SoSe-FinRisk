@@ -12,6 +12,7 @@ if (!all(sapply(required_results, exists))) {
 # 2. CONSOLIDATED SUMMARY DATAFRAME
 # ------------------------------------------------------------------------------
 # Extracting the Expected NPV, Monthly Probability, and Avg Distress Cost
+message("Extracting Case Specific Metrics for final Dataframe")
 task5_summary <- data.frame(
   Scenario         = c("Base (Unhedged)", "Base (Hedged)", "Stressed (Corr=0)"),
   
