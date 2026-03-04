@@ -74,7 +74,7 @@ switch(choice,
            source("Task_Code_Snippets/Task4_Analysis.R")
            
            message("Testing optimal hedge levels")
-           #source("Task_Code_Snippets/Task4_optimal_hedge.R")
+           source("Task_Code_Snippets/Task4_optimal_hedge.R")
            
          } else {
            warning("Base case not executed ! Stopping Program")
@@ -95,7 +95,6 @@ switch(choice,
            
            message("Starting Base Hedge (used in Base Unhedge and Hedge Scenario)")
            source("Task_Code_Snippets/Task3_Exotic_Hedge.R")
-           
 
            message("Performing Stress Test Analysis")
            source("Task_Code_Snippets/Task5_Stress_Analysis.R")

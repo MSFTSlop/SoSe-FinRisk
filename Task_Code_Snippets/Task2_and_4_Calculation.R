@@ -65,6 +65,7 @@ r_monthly_eq <- (1 + r_annual_eq)^(1/12) - 1
 # Pre-allocate tracking matrices
 A_t               <- matrix(0, nrow = n_months + 1, ncol = n_paths)
 equity_injections <- matrix(0, nrow = n_months, ncol = n_paths)
+monthly_nocf      <- matrix(0, nrow = n_months, ncol = n_paths) # <-- ADDED THIS LINE
 
 # Initial balance at Month 0 is exactly €0
 A_t[1, ] <- 0 
@@ -115,6 +116,7 @@ for (t in 1:n_months) {
   
   # --- E. NET CASH FLOW ---
   net_cf <- total_rev + payout_hedge - total_opex - monthly_coupon
+  monthly_nocf[t, ] <- net_cf # <-- ADDED THIS LINE
   
   # --- F. CASH ACCOUNT & DISTRESS MECHANISM ---
   # Balance earns risk-free rate monthly
@@ -172,7 +174,8 @@ current_output <- list(
   expected_npv      = mean(path_npvs),
   prob_distress     = prob_distress_months,
   cum_cost_distress = cum_cost_distress_penalty,
-  a_t_matrix        = A_t
+  a_t_matrix        = A_t,
+  monthly_nocf      = monthly_nocf # <-- ADDED THIS LINE
 )
 
 if (mode_label == "UNHEDGED") {
@@ -197,7 +200,7 @@ cat("\n==========================================\n")
 cat("PROJECT SUMMARY:", mode_label, "\n")
 cat("==========================================\n")
 cat(sprintf("Expected Equity NPV:           €%s\n", format(round(expected_npv, 2), big.mark=",")))
-cat(sprintf("95%% Conf. Interval:            €%s to €%s\n", 
+cat(sprintf("95%% Conf. Interval:             €%s to €%s\n", 
             format(round(npv_95_bounds[1], 2), big.mark=","), 
             format(round(npv_95_bounds[2], 2), big.mark=",")))
 cat(sprintf("Monthly Prob. of Distress:     %s%%\n", round(prob_distress_monthly * 100, 2)))

@@ -11,10 +11,9 @@ if (!all(sapply(required_results, exists))) {
 
 # 2. CONSOLIDATED SUMMARY DATAFRAME
 # ------------------------------------------------------------------------------
-# Extracting the Expected NPV, Monthly Probability, and Avg Distress Cost
 message("Extracting Case Specific Metrics for final Dataframe")
 task5_summary <- data.frame(
-  Scenario         = c("Base (Unhedged)", "Base (Hedged)", "Stressed (Corr=0)"),
+  Scenario         = c("Base (Unhedged)", "Base (100% Hedged)", "Stressed (Corr=0)"),
   
   Expected_NPV_M   = c(results_unhedged$expected_npv, 
                        results_hedged$expected_npv, 
@@ -35,7 +34,6 @@ task5_summary <- data.frame(
 npv_loss_decoupling <- results_unhedged$expected_npv - results_stressed$expected_npv
 
 # Hedge Value: The "NPV lift" provided by the hedge in the base case
-# (Avoidance of 10% penalty vs. Upfront Cost)
 hedge_value_base    <- results_hedged$expected_npv - results_unhedged$expected_npv
 
 # 4. THE EXECUTIVE SUMMARY REPORT
@@ -46,8 +44,12 @@ cat("===========================================================================
 print(task5_summary, row.names = FALSE)
 cat("------------------------------------------------------------------------------\n")
 
-cat("QUESTION 5.c ANALYSIS: DECOUPLED MARKETS\n")
-cat(sprintf("- Decoupling Impact: Breaking correlation (Corr=0) reduced NPV by €%s.\n", 
+cat("HEDGE PERFORMANCE (BASE CASE):\n")
+cat(sprintf("- Hedge Value Add: Hedging 100%% of the volume changed the Expected NPV by €%s.\n", 
+            format(round(hedge_value_base, 0), big.mark=",")))
+
+cat("\nQUESTION 5.c ANALYSIS: DECOUPLED MARKETS\n")
+cat(sprintf("- Decoupling Impact: Breaking correlation (Corr=0) reduced Unhedged NPV by €%s.\n", 
             format(round(npv_loss_decoupling, 0), big.mark=",")))
 
 # Logical conclusion for Question 5.c
