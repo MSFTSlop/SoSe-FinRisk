@@ -95,6 +95,7 @@ switch(choice,
            
            message("Starting Base Hedge (used in Base Unhedge and Hedge Scenario)")
            source("Task_Code_Snippets/Task3_Exotic_Hedge.R")
+           source("Task_Code_Snippets/Task2_and_4_Calculation.R")
 
            message("Performing Stress Test Analysis")
            source("Task_Code_Snippets/Task5_Stress_Analysis.R")
