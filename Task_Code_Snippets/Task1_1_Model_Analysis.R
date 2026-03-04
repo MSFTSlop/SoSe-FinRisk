@@ -86,12 +86,14 @@ for (var in diagnosis_results$Variable) {
 }
 mtext("Volatility Clustering Check", outer = TRUE, cex = 1.2, font = 2)
 
+
+
 # ==============================================================================
 # TASK 1: FINAL MODEL SELECTION VERDICT
 # ==============================================================================
 
 cat("\n", rep("-", 60), "\n")
-cat("FINAL INTEGRATED MODEL VERDICT\n")
+cat("FINAL INTEGRATED MODEL VERDICT & TRADE-OFF ANALYSIS\n")
 cat(rep("-", 60), "\n")
 
 # Logic: Count how many variables triggered a 'GARCH' requirement
@@ -103,23 +105,44 @@ cat(sprintf("- Variables with High-Risk Signatures: %d\n", garch_triggers))
 
 # --- THE DECISION ENGINE ---
 if (garch_triggers > 0) {
-  # VERDICT: USE GARCH(1,1)
-  cat("\n>>> PRIMARY VERDICT: GARCH(1,1) / NON-LINEAR SIMULATION <<<\n\n")
-  cat("REASONING:\n")
-  cat(paste("1. We identified high-risk signatures in", garch_triggers, "variable(s).\n"))
-  cat("2. Because Electricity, Gas, and Carbon are coupled in the Waterfall loop,\n")
-  cat("   ignoring the 'memory' (Clustering) or 'shocks' (Fat Tails) of one variable\n")
-  cat("   would lead to a biased 'Spark Spread' calculation.\n")
-  cat("3. GARCH(1,1) is required to capture 'Volatility Persistence'—the tendency\n")
-  cat("   for high-cost/low-revenue periods to arrive in clusters, which is the \n")
-  cat("   primary driver of Liquidity Distress (Task 5).\n")
+  cat("\n>>> AI ANALYSIS: MIXED SIGNALS DETECTED IN DATA <<<\n\n")
+  cat(paste("The data shows that", garch_triggers, "out of", nrow(diagnosis_results), 
+            "variables exhibit high-risk signatures (ARCH effects or Fat Tails).\n"))
+  cat("Because the dataset contains conflicting statistical profiles, you have two valid modeling options:\n\n")
+  
+  cat("[OPTION 1] GARCH(1,1) / NON-LINEAR SIMULATION (Data-Driven Recommendation)\n")
+  cat("PROS: \n")
+  cat(" - Captures 'Volatility Persistence' for the variables that triggered the high-risk flags.\n")
+  cat(" - Because Electricity, Gas, and Carbon are coupled in the Waterfall loop, modeling the\n")
+  cat("   'memory' of shocks in fuel costs prevents a biased 'Spark Spread' calculation.\n")
+  cat("CONS: \n")
+  cat(" - Introduces mathematical complexity to variables that may not strictly require it.\n\n")
+  
+  cat("[OPTION 2] LINEAR / GEOMETRIC BROWNIAN MOTION\n")
+  cat("PROS: \n")
+  cat(" - Computationally efficient, simpler to audit, and perfectly valid for the variables\n")
+  cat("   that showed normal distributions and memoryless returns (p-values > 0.05).\n")
+  cat("CONS: \n")
+  cat(" - Structurally ignores the identified high-risk variables, which may lead to an\n")
+  cat("   underestimation of Liquidity Distress (Task 5) during severe market shocks.\n\n")
+  
+  cat("CONCLUSION: The AI recommends GARCH(1,1) to safely capture the identified tail risks,\n")
+  cat("but the Linear framework remains a viable alternative if model parsimony is preferred.\n")
+  
 } else {
-  # VERDICT: USE LINEAR / RANDOM WALK
-  cat("\n>>> PRIMARY VERDICT: LINEAR / GEOMETRIC BROWNIAN MOTION <<<\n\n")
+  cat("\n>>> AI ANALYSIS: UNIFORM DATA PROFILE DETECTED <<<\n\n")
+  
+  cat("[OPTION] LINEAR / GEOMETRIC BROWNIAN MOTION (Strong Recommendation)\n")
   cat("REASONING:\n")
   cat("1. All analyzed variables exhibit Excess Kurtosis <= 0 and p-values > 0.05.\n")
-  cat("2. Returns appear to be normally distributed and memoryless.\n")
-  cat("3. A simpler Linear model is sufficient and avoids unnecessary complexity.\n")
+  cat("2. Returns appear to be normally distributed and memoryless across the entire dataset.\n")
+  cat("3. A simpler Linear model is strictly sufficient and avoids unnecessary complexity.\n\n")
+  
+  cat("CONCLUSION: The AI strongly recommends Geometric Brownian Motion. Using GARCH(1,1)\n")
+  cat("on this specific dataset would result in over-parameterization with no added benefit.\n")
 }
 
+
+
 cat(rep("=", 60), "\n")
+cat("Please proceed to the main script to make your final selection.\n")

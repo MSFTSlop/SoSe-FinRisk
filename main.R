@@ -17,11 +17,34 @@ source("Task_Code_Snippets/Data_Prep.R")
 
 message("Data Preparation done; Starting model Choice engine")
 source("Task_Code_Snippets/Task1_1_Model_Analysis.R")
-message("Choice complete; initiating selector")
+
+cat("\nAI did one Analysis and Suggestion.\n",
+    "You can either go along with it or switch\n",
+    "if you believe, the AIs deduction is wrong\n",
+    "1: GARCH (1,1) as Monte Carlo Simulation\n",
+    "2: Linear/Random Walk as Monte Carlo Simulation\n")
+
+modelselection <- readline(prompt = "Selection [1-2]: ")
+
+switch(modelselection,
+       "1" = {
+         GARCH_Core <- TRUE
+         message("Monte Carlo Simulation will use the Garch Multivariable Engine")
+       },
+       "2" = {
+         LINEAR_Core <- TRUE
+         message("Monte Carlo Simulation will use the Linear Multivariable Engine")
+       },
+       { # Default case (like Java's 'default')
+         stop("Invalid selection. Script terminated.")
+       }
+)
 
 # ==============================================================================
 # UNIFIED SCENARIO SELECTOR
 # ==============================================================================
+
+message("initiating selector")
 
 ## relevant for task 4 and 5 to redo calculations on task 2 and 3
 cat("\nSELECT PROJECT SCENARIO:\n",
@@ -42,7 +65,14 @@ switch(choice,
          cat(paste(">>> Initializing Scenario:", mode_label, "\n"))
          
          message("Starting Base Simulation (used in Base Unhedge and Hedge Scenario)")
-         source("Task_Code_Snippets/Task1_2_Simulation.R")
+         
+         if (exists("GARCH_Core")){ 
+           source("Task_Code_Snippets/Task1_2_Simulation_GARCH.R")
+         } else if (exists("LINEAR_Core")){ 
+           source("Task_Code_Snippets/Task1_2_Simulation_LINEAR.R")
+         } else {
+           stop("No Clear Simulation Core selected! Stopping script")
+         }
          
          message("Starting Base Hedge (used in Base Unhedge and Hedge Scenario)")
          source("Task_Code_Snippets/Task3_Exotic_Hedge.R")
@@ -91,7 +121,14 @@ switch(choice,
            cat(paste(">>> Initializing Scenario:", mode_label, "\n"))
            
            message("Starting Stressed Simulation (used in Stressed Unhedge Scenario)")
-           source("Task_Code_Snippets/Task1_2_Simulation.R")
+           
+           if (exists("GARCH_Core")){ 
+             source("Task_Code_Snippets/Task1_2_Simulation_GARCH.R")
+           } else if (exists("LINEAR_Core")){ 
+             source("Task_Code_Snippets/Task1_2_Simulation_LINEAR.R")
+           } else {
+             stop("No Clear Simulation Core selected! Stopping script")
+           }
            
            message("Starting Base Hedge (used in Base Unhedge and Hedge Scenario)")
            source("Task_Code_Snippets/Task3_Exotic_Hedge.R")
